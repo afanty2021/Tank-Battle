@@ -1,0 +1,353 @@
+{
+  "images": {
+    "background": {
+      "file": "background.jpg",
+      "stage_size": [
+        480.0,
+        360.0
+      ],
+      "rotation_center": [
+        240.0,
+        180.0
+      ],
+      "tight_bbox_px": null
+    },
+    "player_body": {
+      "file": "player_body.png",
+      "stage_size": [
+        203.0,
+        106.0
+      ],
+      "rotation_center": [
+        112.15000499999996,
+        54.041666666666714
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        406,
+        212
+      ]
+    },
+    "explosion_player_1": {
+      "file": "explosion_player_1.png",
+      "stage_size": [
+        80.0,
+        120.0
+      ],
+      "rotation_center": [
+        40.0,
+        60.0
+      ],
+      "tight_bbox_px": [
+        0,
+        14,
+        160,
+        158
+      ]
+    },
+    "explosion_player_2": {
+      "file": "explosion_player_2.png",
+      "stage_size": [
+        90.0,
+        120.0
+      ],
+      "rotation_center": [
+        45.0,
+        60.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        180,
+        192
+      ]
+    },
+    "explosion_player_3": {
+      "file": "explosion_player_3.png",
+      "stage_size": [
+        90.0,
+        120.0
+      ],
+      "rotation_center": [
+        45.0,
+        60.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        180,
+        188
+      ]
+    },
+    "explosion_player_4": {
+      "file": "explosion_player_4.png",
+      "stage_size": [
+        83.0,
+        120.0
+      ],
+      "rotation_center": [
+        41.5,
+        60.0
+      ],
+      "tight_bbox_px": [
+        4,
+        2,
+        166,
+        180
+      ]
+    },
+    "explosion_player_5": {
+      "file": "explosion_player_5.png",
+      "stage_size": [
+        82.0,
+        120.0
+      ],
+      "rotation_center": [
+        41.0,
+        60.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        164,
+        214
+      ]
+    },
+    "explosion_player_6": {
+      "file": "explosion_player_6.png",
+      "stage_size": [
+        71.0,
+        120.0
+      ],
+      "rotation_center": [
+        35.5,
+        60.0
+      ],
+      "tight_bbox_px": [
+        0,
+        2,
+        142,
+        224
+      ]
+    },
+    "player_turret": {
+      "file": "player_turret.png",
+      "stage_size": [
+        225.5,
+        92.5
+      ],
+      "rotation_center": [
+        63.543750000000045,
+        45.07708333333335
+      ],
+      "tight_bbox_px": [
+        0,
+        1,
+        451,
+        185
+      ]
+    },
+    "enemy_tank_1": {
+      "file": "enemy_tank_1.png",
+      "stage_size": [
+        272.738,
+        106.613
+      ],
+      "rotation_center": [
+        270.3690361984791,
+        53.05670850338707
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        544,
+        213
+      ]
+    },
+    "enemy_tank_2": {
+      "file": "enemy_tank_2.png",
+      "stage_size": [
+        272.755,
+        106.658
+      ],
+      "rotation_center": [
+        271.87761036717177,
+        52.07898398001795
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        545,
+        213
+      ]
+    },
+    "explosion_enemy_1": {
+      "file": "explosion_enemy_1.png",
+      "stage_size": [
+        80.0,
+        72.0
+      ],
+      "rotation_center": [
+        84.0,
+        37.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        160,
+        144
+      ]
+    },
+    "explosion_enemy_2": {
+      "file": "explosion_enemy_2.png",
+      "stage_size": [
+        90.0,
+        96.0
+      ],
+      "rotation_center": [
+        94.0,
+        50.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        180,
+        192
+      ]
+    },
+    "explosion_enemy_3": {
+      "file": "explosion_enemy_3.png",
+      "stage_size": [
+        90.0,
+        94.0
+      ],
+      "rotation_center": [
+        90.0,
+        47.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        180,
+        188
+      ]
+    },
+    "explosion_enemy_4": {
+      "file": "explosion_enemy_4.png",
+      "stage_size": [
+        81.0,
+        89.0
+      ],
+      "rotation_center": [
+        83.5,
+        44.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        162,
+        178
+      ]
+    },
+    "explosion_enemy_5": {
+      "file": "explosion_enemy_5.png",
+      "stage_size": [
+        82.0,
+        107.0
+      ],
+      "rotation_center": [
+        87.0,
+        46.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        164,
+        214
+      ]
+    },
+    "explosion_enemy_6": {
+      "file": "explosion_enemy_6.png",
+      "stage_size": [
+        71.0,
+        111.0
+      ],
+      "rotation_center": [
+        73.5,
+        54.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        142,
+        222
+      ]
+    },
+    "missile": {
+      "file": "missile.png",
+      "stage_size": [
+        55.0,
+        18.0
+      ],
+      "rotation_center": [
+        28.0,
+        9.0
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        110,
+        36
+      ]
+    },
+    "bullet": {
+      "file": "bullet.png",
+      "stage_size": [
+        61.886,
+        8.457
+      ],
+      "rotation_center": [
+        32.04907900684833,
+        4.526524995701834
+      ],
+      "tight_bbox_px": [
+        0,
+        0,
+        124,
+        17
+      ]
+    },
+    "screen_start": {
+      "file": "screen_start.jpg",
+      "stage_size": [
+        480.0,
+        360.0
+      ],
+      "rotation_center": [
+        240.0,
+        180.0
+      ],
+      "tight_bbox_px": null
+    },
+    "screen_gameover": {
+      "file": "screen_gameover.jpg",
+      "stage_size": [
+        480.0,
+        360.0
+      ],
+      "rotation_center": [
+        240.0,
+        180.0
+      ],
+      "tight_bbox_px": null
+    }
+  },
+  "sounds": {
+    "explosion.ogg": "2afa85c175d5989dfee60911eb995304.mp3",
+    "fire_player.ogg": "acaeeaa4863a1a4b070d263efa6d0064.mp3",
+    "fire_enemy.ogg": "c84c7cda2c453eb0b8c3adacff1886be.mp3",
+    "music_start.ogg": "6b95cc8cebf2e8e36973a5f869db3ab9.mp3",
+    "music_gameover.ogg": "4dec63aeb5c9fb04d9df9a7a779f69fb.mp3"
+  }
+}

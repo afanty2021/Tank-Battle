@@ -1,0 +1,24 @@
+# 构建产物(由 build.bat 生成, 不入库)
+tank-battle-cpp/tank-battle.exe
+tank-battle-cpp/unit_tests.exe
+tank-battle-cpp/*.dll
+
+# 自动化验证的临时截图/日志
+shot*.png
+shot*.png.full.png
+dbg*.png
+dbg*.log
+*.log
+
+# 原始素材压缩包(与素材目录内容重复)
+*.zip
+
+# macOS 解包残留
+__MACOSX/
+.DS_Store
+
+# 本机工具配置
+.zcodeignore
+
+# Python
+__pycache__/
