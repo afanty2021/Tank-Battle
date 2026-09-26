@@ -113,6 +113,7 @@ void Game::startGame() {
     missiles.clear();
     bullets.clear();
     fireCooldown = 0.f;
+    turretManual = false;
     spawnTimer = 0.f;                             // 敌方克隆循环立即先生成一个
     phase = Phase::Playing;
 }
@@ -128,11 +129,23 @@ void Game::spawnEnemy() {
 void Game::updatePlayer(float dt) {
     // 炮塔脚本: 永远重复(移到车身位置, 面向鼠标)。
     // 被击中/游戏结束后炮塔仅隐藏, 其跟随脚本仍在运行, 导弹仍沿其朝向发射。
-    // 鼠标坐标经当前视图映射回 960x720 逻辑系(窗口缩放后依然准确)
-    if (phase != Phase::Title && phase != Phase::TitleMusic && phase != Phase::Stopped)
-        player.turretDir = stage::pointDirection(
-            player.pos,
-            stage::toStage(window.mapPixelToCoords(sf::Mouse::getPosition(window))));
+    // 鼠标坐标经当前视图映射回 960x720 逻辑系(窗口缩放后依然准确)。
+    // 移植版附加(非原版): ←/→ 方向键逆/顺时针旋转炮塔, 接管期间暂停
+    // 鼠标跟随; 鼠标位置一变立即恢复原版的“面向鼠标”
+    if (phase != Phase::Title && phase != Phase::TitleMusic && phase != Phase::Stopped) {
+        const bool left = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left);
+        const bool right = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right);
+        const sf::Vector2i mouseNow = sf::Mouse::getPosition(window);
+        if (left || right) turretManual = true;
+        if (mouseNow != lastMousePos) turretManual = false;
+        lastMousePos = mouseNow;
+        if (left || right)
+            player.turretDir += (right ? TurretTurnSpeed : -TurretTurnSpeed) * dt;
+        else if (!turretManual)
+            player.turretDir = stage::pointDirection(
+                player.pos,
+                stage::toStage(window.mapPixelToCoords(mouseNow)));
+    }
 
     // 车身移动循环不监听“被击中/游戏结束”: 玩家被击中后(含整个结算音乐期间)
     // 隐形车身仍可用 WASD 驾驶, 爆炸动画与导弹发射点也随之移动

@@ -73,6 +73,7 @@ private:
     static constexpr float FireCooldown = 0.5f;    // control_wait 0.5
     static constexpr float EnemyFireInterval = 2.f;// control_wait 2
     static constexpr float ExplosionFrameTime = 0.1f;
+    static constexpr float TurretTurnSpeed = 180.f; // ←/→ 键旋转炮塔(移植版新增, 每秒 180°)
     // 玩家活动范围: motion_if x>-211 / x<205 / y>-154 / y<150
     static constexpr float PlayerMinX = -211.f, PlayerMaxX = 205.f;
     static constexpr float PlayerMinY = -154.f, PlayerMaxY = 150.f;
@@ -99,6 +100,8 @@ private:
     std::vector<Missile> missiles;
     std::vector<Bullet> bullets;
     float fireCooldown = 0.f;
+    bool turretManual = false;  // 方向键接管炮塔期间暂停鼠标跟随; 鼠标一动即恢复
+    sf::Vector2i lastMousePos{};
     float spawnTimer = 0.f;      // 敌方生成计时(1~5 秒随机)
     std::mt19937 rng{std::random_device{}()};
     std::vector<sf::Sound> voices;      // 复用的播放通道
