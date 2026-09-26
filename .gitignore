@@ -13,6 +13,9 @@ dbg*.log
 # 原始素材压缩包(与素材目录内容重复)
 *.zip
 
+# 子集化的源字体(可由 README 给出的地址重新下载)
+tank-battle-cpp/NotoSansSC-Regular.otf
+
 # macOS 解包残留
 __MACOSX/
 .DS_Store

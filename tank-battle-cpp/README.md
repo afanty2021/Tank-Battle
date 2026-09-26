@@ -20,6 +20,7 @@ tank-battle-cpp/
 ├── assets/            游戏素材（由 tools/extract_assets.py 从 .sb3 导出）
 │   ├── images/        背景、坦克、导弹、子弹、爆炸动画帧、开始/结束画面
 │   ├── sounds/        音效（原 mp3 已转为 SFML 支持的 ogg）
+│   ├── fonts/         自带中文字体（Noto Sans SC 子集，OFL 授权，tools/subset_font.py 生成）
 │   └── manifest.json  导出清单（尺寸/旋转中心/紧包围盒等元数据）
 ├── src/
 │   ├── main.cpp       入口：固定尺寸窗口、固定 30Hz 逻辑主循环（对应 Scratch 帧率）

@@ -101,10 +101,11 @@ bool Assets::load(const std::string& dir) {
     if (!loadSnd(sndMusicStart,    snd + "music_start.ogg"))    return false;
     if (!loadSnd(sndMusicGameOver, snd + "music_gameover.ogg")) return false;
 
-    // 中文字体: 优先系统黑体, 用于“分数”和操作提示
-    const std::string fontPaths[] = {"C:/Windows/Fonts/simhei.ttf",
-                                     "C:/Windows/Fonts/msyh.ttc",
-                                     dir + "/fonts/simhei.ttf"};
+    // 中文字体: 首选自带的 OFL 子集字体(Noto Sans SC, 见 tools/subset_font.py),
+    // 保证三平台渲染一致; Windows 系统字体仅作回退
+    const std::string fontPaths[] = {dir + "/fonts/NotoSansSC-Game.otf",
+                                     "C:/Windows/Fonts/simhei.ttf",
+                                     "C:/Windows/Fonts/msyh.ttc"};
     for (const auto& path : fontPaths) {
         sf::Font f;
         if (f.openFromFile(path)) {
