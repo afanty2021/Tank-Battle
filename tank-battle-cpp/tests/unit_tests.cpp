@@ -315,6 +315,175 @@ static void testSnapAcceptRule() {
     // (暂停可见性 N1 的端到端验证在 Task 4 冒烟第 7 项, 纯函数层无增量可测)
 }
 
+// ---------------- PvP 战斗模拟(Battle) ----------------
+#include "../src/Battle.hpp"
+
+// 小数值测试配置(不依赖素材): 场地 ±100, 速度 10, 出生点分离
+static BattleDefs testDefs() {
+    BattleDefs d;
+    d.playerSpeed = 10.f; d.missileSpeed = 100.f; d.fireCooldown = 0.5f;
+    d.minX = -100.f; d.maxX = 100.f; d.minY = -100.f; d.maxY = 100.f;
+    d.tankHalfExtents = {10.f, 10.f}; d.tankCenterOffset = {0.f, 0.f};
+    d.tankSize = 1.f;
+    d.missileHalfExtents = {2.f, 2.f}; d.missileCenterOffset = {0.f, 0.f};
+    d.missileSize = 1.f;
+    d.spawn[0] = {0.f, -50.f}; d.spawnDir[0] = 0.f;
+    d.spawn[1] = {0.f, 50.f};  d.spawnDir[1] = 180.f;
+    return d;
+}
+static InputState idle() { return {}; }
+
+static void testBattleCountdownThenControls() {
+    BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
+    InputState in[2] = {idle(), idle()};
+    // 步进到倒计时结束(90 步=2.997s, 浮点累积误差可能差 1 步, 用条件循环)
+    for (int i = 0; i < 120 && s.phase == BattlePhase::Countdown; ++i)
+        stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.phase == BattlePhase::Battle);
+    in[0].moveBits = 0x01; // W
+    stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.tanks[0].pos.y > d.spawn[0].y);            // 倒计时后才动
+    CHECK(s.tanks[0].dir == 0.f);
+    in[0].aim = 123.f; stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(near(s.tanks[0].turret, 123.f));             // 炮塔=上报绝对角
+}
+
+static void testBattleFenceAndCooldown() {
+    BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
+    s.phase = BattlePhase::Battle;
+    InputState in[2] = {idle(), idle()};
+    in[0].moveBits = 0x01;                              // 一路向上顶到 maxY
+    for (int i = 0; i < 600; ++i) stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.tanks[0].pos.y <= d.maxY);
+    // 连发冷却: 首帧可发, 下一帧(同按住)不可。注意开火帧导弹即前进一步
+    // (与单人同帧序一致), 炮口必须朝向开阔方向: 朝右(90°)时导弹路径
+    // (0,100)->(100,100)->(200,100) 全程在舞台 ±240/±180 内不会出界消失
+    in[0].moveBits = 0; in[0].fire = true; in[0].aim = 90.f;
+    stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.missiles.size() == 1 && s.fired[0]);
+    stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.missiles.size() == 1 && !s.fired[0]);
+}
+
+static void testBattleMissileOwnerNoSelfHit() {
+    BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
+    s.phase = BattlePhase::Battle;
+    s.tanks[0].pos = {50.f, -50.f}; // 错开 x: 导弹路径 x=50 不经过任何坦克
+    InputState in[2] = {idle(), idle()};     // (双方原出生点相距恰 100=导弹一步,
+    in[0].fire = true; in[0].aim = 0.f;      //  原地朝上开炮会开火帧即命中对方)
+    stepBattle(s, d, in, 1.f / 30.f); // 出生帧即前进一步: (50,-50)->(50,50)
+    in[0].fire = false;
+    CHECK(s.missiles.size() == 1);    // 没被"打到自己"吞掉
+    CHECK(s.hp[0] == 3 && s.hp[1] == 3 && // 也没打到对方(路径已错开)
+          s.tanks[0].state == TankState::Alive);
+    for (int i = 0; i < 6; ++i) stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.missiles.empty());        // 飞出舞台上界即消失
+    CHECK(s.hp[0] == 3 && s.hp[1] == 3);
+}
+
+static void testBattleHitHpRespawnInvuln() {
+    BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
+    s.phase = BattlePhase::Battle;
+    // 导弹每步 100 > 命中窗(±12), 必须放"下一步落点"上: 坦克1 在 (0,50),
+    // 导弹放 (0,-40) 朝上 -> 下一步到 (0,60), |60-50|=10 <= 12 命中。
+    // 该落点同时穿过坦克0 的命中区(它在自己出生点 (0,-50)), 顺带验证属主跳过
+    s.missiles.push_back({{0.f, -40.f}, 0.f, 0});
+    InputState in[2] = {idle(), idle()};
+    stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.hit[1] && s.hp[1] == 2);
+    CHECK(s.tanks[1].state == TankState::Exploding);    // 冻结: 不可动不可发
+    in[1].moveBits = 0x01; in[1].fire = true;
+    stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.tanks[1].pos == d.spawn[1]);                // 没动
+    in[1].moveBits = 0; in[1].fire = false;             // 清输入, 别让测试自造导弹
+    // 爆炸 6 帧后回出生点+无敌; 转换帧上朝向/炮塔被重置为 spawnDir(180),
+    // 之后各帧 turret 恒等于上报 aim(炮塔永远跟随输入)——所以炮塔断言
+    // 只能在转换帧当步做
+    bool respawned = false;
+    for (int i = 0; i < 30 && !respawned; ++i) {
+        stepBattle(s, d, in, 1.f / 30.f);
+        if (s.tanks[1].state == TankState::Invulnerable) {
+            respawned = true;
+            CHECK(s.tanks[1].pos == d.spawn[1] && s.tanks[1].dir == 180.f);
+            CHECK(near(s.tanks[1].turret, 180.f));
+        }
+    }
+    CHECK(respawned);
+    // 无敌期导弹正中也不扣血: 放"下一步正好落在坦克1 身上"的导弹
+    s.missiles.push_back({{0.f, -50.f}, 0.f, 0}); // 下一步到 (0,50)=坦克1 中心
+    for (int i = 0; i < 5; ++i) stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.hp[1] == 2 && s.tanks[1].state == TankState::Invulnerable);
+    // 无敌 1.5s 后恢复可被击中
+    for (int i = 0; i < 50; ++i) stepBattle(s, d, in, 1.f / 30.f);
+    CHECK(s.tanks[1].state == TankState::Alive);
+}
+
+static void testBattleFatalFreezeAndDraw() {
+    BattleDefs d = testDefs();
+    // 致命一击: hp1=1, 命中即全场冻结(爆炸动画也不播), 胜者=0
+    {
+        BattleState s; resetBattle(s, d); s.phase = BattlePhase::Battle;
+        s.hp[1] = 1;
+        s.missiles.push_back({{0.f, -40.f}, 0.f, 0}); // 下一步命中坦克1
+        InputState in[2] = {idle(), idle()};
+        stepBattle(s, d, in, 1.f / 30.f);
+        CHECK(s.phase == BattlePhase::Over && s.winner == 0 && s.died[1]);
+        const int frame = s.tanks[1].animFrame;
+        for (int i = 0; i < 30; ++i) stepBattle(s, d, in, 1.f / 30.f);
+        CHECK(s.tanks[1].animFrame == frame); // 计时器全停(禁墙钟)
+    }
+    // 同 tick 双亡 -> 平局(两发导弹同帧各命中一人)
+    {
+        BattleState s; resetBattle(s, d); s.phase = BattlePhase::Battle;
+        s.hp[0] = s.hp[1] = 1;
+        s.missiles.push_back({{0.f, -40.f}, 0.f, 0});    // 下一步命中坦克1
+        s.missiles.push_back({{0.f, 40.f}, 180.f, 1});   // 下一步到 (0,-60), 距坦克0(0,-50) 10 命中
+        InputState in[2] = {idle(), idle()};
+        stepBattle(s, d, in, 1.f / 30.f);
+        CHECK(s.phase == BattlePhase::Over && s.winner == 2);
+        CHECK(s.died[0] && s.died[1]);
+    }
+}
+
+static void testBattleResetKeepsCallerTickContract() {
+    // C1 契约: resetBattle 只重置战斗, 不碰任何网络计数;
+    // tick 由 NetSession 持有且永不回退 —— 这里锁 resetBattle 的完整性
+    BattleDefs d = testDefs();
+    BattleState s; resetBattle(s, d);
+    s.phase = BattlePhase::Over; s.winner = 0; s.hp[0] = 0;
+    s.missiles.push_back({{}, 0.f, 0});
+    resetBattle(s, d);
+    CHECK(s.phase == BattlePhase::Countdown && s.winner == -1);
+    CHECK(s.hp[0] == 3 && s.hp[1] == 3 && s.missiles.empty());
+    CHECK(s.tanks[0].pos == d.spawn[0] && s.tanks[1].pos == d.spawn[1]);
+}
+
+static void testBattleDeterminism() {
+    BattleDefs d = testDefs();
+    BattleState a, b; resetBattle(a, d); resetBattle(b, d);
+    InputState in[2] = {{0x09, 30.f, true}, {0x02, 200.f, false}};
+    for (int i = 0; i < 300; ++i) {
+        stepBattle(a, d, in, 1.f / 30.f);
+        stepBattle(b, d, in, 1.f / 30.f);
+    }
+    for (int i = 0; i < 2; ++i) {
+        CHECK(a.tanks[i].pos == b.tanks[i].pos);
+        CHECK(a.hp[i] == b.hp[i] && a.tanks[i].state == b.tanks[i].state);
+    }
+    CHECK(a.missiles.size() == b.missiles.size());
+}
+
+static void testMakeSnap() {
+    BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
+    s.phase = BattlePhase::Battle; s.hp[1] = 2;
+    s.missiles.push_back({{1.f, 2.f}, 90.f, 1});
+    const proto::SnapMsg snap = makeSnap(s, false);
+    CHECK(snap.phase == proto::Phase::Battle && snap.hp[1] == 2);
+    CHECK(snap.missiles.size() == 1 && snap.missiles[0].owner == 1);
+    const proto::SnapMsg paused = makeSnap(s, true);
+    CHECK(paused.phase == proto::Phase::Paused);       // 暂停标签可见性(N1)
+}
+
 int main() {
     testConversions();
     testDirectionSystem();
@@ -326,6 +495,14 @@ int main() {
     testProtoRoundTrip();
     testProtoBadPackets();
     testSnapAcceptRule();
+    testBattleCountdownThenControls();
+    testBattleFenceAndCooldown();
+    testBattleMissileOwnerNoSelfHit();
+    testBattleHitHpRespawnInvuln();
+    testBattleFatalFreezeAndDraw();
+    testBattleResetKeepsCallerTickContract();
+    testBattleDeterminism();
+    testMakeSnap();
     if (failures == 0)
         std::printf("unit_tests: all passed\n");
     else
