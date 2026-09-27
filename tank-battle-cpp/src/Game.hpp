@@ -11,13 +11,17 @@
 //   角色1(操作提示)   -> helpText
 //   舞台变量 分数     -> score
 #include "Assets.hpp"
+#include "Battle.hpp"
 #include "common.hpp"
 
 #include <SFML/Network.hpp>
+#include <memory>
 #include <random>
 #include <string>
 #include <thread>
 #include <vector>
+
+class NetSession; // 联机会话层(Task 4), Game.cpp 内使用完整定义
 
 struct Player {
     sf::Vector2f pos;
@@ -61,12 +65,18 @@ enum class Phase {
 class Game {
 public:
     Game(Assets& assets, sf::RenderWindow& window);
+    ~Game(); // 联机收尾: 尽力 BYE+停心跳(net_ 析构再 close 兜底; 单人无操作)
 
     void handleEvent(const sf::Event& event);
     void update(float dt);       // 固定步长 1/30s, 对应 Scratch 的 30fps 帧模型
     void render(sf::RenderWindow& target) const;
     bool wantQuit() const { return quit; } // Esc / 关闭窗口
     bool voiceReady() const { return voiceBound; } // 未接管 UDP 端口时为 false
+
+    // ---- 联机模式(Task 5): 默认 Solo, 一切联机路径以 mode_ != Solo 为闸 ----
+    enum class Mode { Solo, NetHost, NetClient };
+    Mode mode() const { return mode_; }
+    void requestDirectJoin(const std::string& hostIp); // main.cpp --join 用
 
 private:
     // ---- 数值全部来自 Scratch 积木(每“步”都是每帧位移) ----
@@ -129,4 +139,39 @@ private:
     std::vector<sf::Sound> voices;      // 复用的播放通道
     std::optional<sf::Sound> titleMusic;     // 开始音乐(SFML 3 的 Sound 无默认构造)
     std::optional<sf::Sound> gameOverMusic;  // 结束音乐
+
+    // ---- 联机(单人路径不动; 全部以 mode_ != Solo 为闸) ----
+    struct NetView {                    // 客户端侧渲染视图(来自最新快照)
+        proto::SnapMsg snap;
+        bool has = false;
+        float countdownLocal = 0.f;     // phase->0 启动的本地 3s 倒计时
+        bool wasCountdown = false;
+        float noSnapSince = 0.f;        // >1s 且未掉线 -> 本地"暂停中"兜底标签
+    };
+    void netStartHost();
+    void netStartScan();
+    void netStartJoin(sf::IpAddress host);
+    void netLeave();                    // Esc: BYE+清理+回 Title
+    InputState buildLocalInput();       // 键盘+语音 -> InputState(归一化点)
+    void netUpdateHost(float dt);
+    void netUpdateClient(float dt);
+    void netHandleEvents();
+    Mode mode_ = Mode::Solo;
+    std::unique_ptr<NetSession> net_;
+    BattleDefs netDefs_;
+    BattleState battle_;                // 主机模拟用
+    NetView view_;                      // 客户端渲染用
+    bool netLocalReady_ = false;        // 本机 R(结算期)
+    bool netWasOver_ = false;           // 客户端: 用于 Over->新局跳变时清 ready
+    bool joiningStarted_ = false;       // 客户端: 扫描选定主机后置位
+    float netJoinWait_ = 0.f;           // 客户端: JOIN 后等首个 SNAP 的计时(5s)
+    float netBlinkTimer_ = 0.f;         // 无敌闪烁时钟(0.1s 翻转)
+    static std::string machineName();   // COMPUTERNAME 兜底 "host"/"client"
+    // 从单人 updatePlayer 抽出的炮塔跟随段(仅 Game.cpp:161-183 的函数体,
+    // **守卫 if(phase!=Title&&...) 留在单人调用点不进函数**——联机会话期间
+    // Game::phase 恒为 Title, 守卫进了函数体联机炮塔就永远不更新):
+    // 鼠标跟随的 pointDirection 锚点改用参数(单人传 player.pos; 主机传
+    // battle_.tanks[0].pos; 客户端传 view_.snap.tanks[1].pos——单人结构
+    // player.pos 在联机中恒 {0,0}, 沿用会系统性偏瞄)
+    void updateTurretLocal(float dt, sf::Vector2f anchorPos);
 };
