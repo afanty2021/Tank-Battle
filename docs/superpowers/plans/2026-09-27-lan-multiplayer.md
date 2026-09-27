@@ -37,6 +37,25 @@ spec 隐含但易咬人的输入类/失效模式，逐条钉进 owning task 的�
 
 ---
 
+### Task 0: 工作区清场（执行前置，5 分钟）
+
+**Files:** 无代码改动；只保证后续提交不混入无关工作流。
+
+- [ ] **Step 1: 检查并隔离无关改动**
+
+Run: `cd /d/Berton/Tank-Battle && git status --short`
+Expected: 除 docs/ 下计划/spec 外为空。**若存在 `tank-battle-cpp/lessons`、字体等未提交改动（教学线工作流），必须先隔离**——它们不属于联机提交，且 Task 7/8 的 git add 会误吞：
+
+Run: `git stash push -m "lessons WIP (非联机改动, 联机执行期间暂存)" -- tank-battle-cpp/lessons tank-battle-cpp/assets/fonts && git status --short`
+Expected: 只剩 docs/。记下 stash（Task 7 的字体重生成已含教学字形全集——subset_font.py 的 TEXT 本就包含课例文字——pop 回来冲突时以重新生成版为准）。
+
+- [ ] **Step 2: 确认分支与基线**
+
+Run: `git branch --show-current && git log --oneline -1`
+Expected: `feature/lan-multiplayer`，HEAD 为本计划提交。
+
+---
+
 ### Task 1: InputState.hpp + Protocol.hpp（纯编解码，TDD）
 
 **Files:**
@@ -160,6 +179,9 @@ static void testProtoBadPackets() {
     proto::SnapMsg own = s; own.missiles.push_back({0.f, 0.f, 0.f, 2});
     CHECK(!proto::decodeSnap(proto::encodeSnap(own).data(),
                              proto::encodeSnap(own).size()));
+    // ERR reason 只定义 1/2, 3=坏包
+    auto ebad = proto::encodeErr(3, 1);
+    CHECK(!proto::decodeErr(ebad.data(), ebad.size()));
 }
 
 static void testSnapAcceptRule() {
@@ -167,8 +189,7 @@ static void testSnapAcceptRule() {
     CHECK(proto::acceptVerdict(101, 100) == A::Apply);
     CHECK(proto::acceptVerdict(100, 100) == A::Skip);   // 重复包: 事件不重放
     CHECK(proto::acceptVerdict(99, 100) == A::Discard); // 旧包
-    // N1 机制: 暂停期 tick 照增, 第一个 phase=3 快照 tick 必然 > lastTick -> Apply
-    CHECK(proto::acceptVerdict(101, 100) == A::Apply);
+    // (暂停可见性 N1 的端到端验证在 Task 4 冒烟第 7 项, 纯函数层无增量可测)
 }
 ```
 
@@ -183,7 +204,7 @@ static void testSnapAcceptRule() {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /d/Berton/Tank-Battle/tank-battle-cpp && "/d/Scoop/apps/msys2/current/ucrt64/bin/g++.exe" -std=c++20 -O1 -Wall -Wextra -Wshadow -Wconversion tests/unit_tests.cpp -o unit_tests.exe -lsfml-system && ./unit_tests.exe`
+Run: `cd /d/Berton/Tank-Battle/tank-battle-cpp && "/d/Scoop/apps/msys2/current/ucrt64/bin/g++.exe" -B"D:/Scoop/apps/msys2/current/ucrt64/bin/" -std=c++20 -O1 -Wall -Wextra -Wshadow -Wconversion tests/unit_tests.cpp -o unit_tests.exe -lsfml-system && ./unit_tests.exe`
 Expected: 编译失败 `Protocol.hpp: No such file or directory`（正是要的红）。
 
 - [ ] **Step 3: 写实现**
@@ -260,7 +281,11 @@ inline void putU32(std::vector<std::uint8_t>& b, std::uint32_t v) {
 }
 struct Reader {
     const std::uint8_t* p; std::size_t n; std::size_t i = 0; bool ok = true;
-    std::uint8_t u8() { return i < n ? p[i++] : (ok = false, 0); }
+    std::uint8_t u8() {
+        if (i < n) return p[i++]; // 三目写法会提升为 int 触发 -Wconversion
+        ok = false;
+        return 0;
+    }
     std::uint16_t u16() {
         if (i + 2 > n) { ok = false; return 0; }
         const std::uint16_t v = static_cast<std::uint16_t>(p[i] | (p[i + 1] << 8));
@@ -305,7 +330,7 @@ inline std::vector<std::uint8_t> header(Id id) {
     return {static_cast<std::uint8_t>(id), kVersion};
 }
 inline bool idIs(const std::uint8_t* p, std::size_t n, Id id) {
-    return n >= 1 && p[0] == static_cast<std::uint8_t>(id);
+    return n >= 2 && p[0] == static_cast<std::uint8_t>(id); // n>=2: 头占 2 字节
 }
 
 // ---- DISC/KEEP/BYE: 纯公共头, 无载荷 ----
@@ -323,7 +348,7 @@ inline std::vector<std::uint8_t> encodeHost(const std::string& name) {
 }
 inline std::optional<HostMsg> decodeHost(const std::uint8_t* p, std::size_t n) {
     if (!idIs(p, n, Id::Host)) return std::nullopt;
-    Reader r{p + 1, n - 1};
+    Reader r{p + 2, n - 2}; // 跳过 [id][ver] 两字节头
     HostMsg m; m.name = r.str();
     if (r.ok) return m;
     return std::nullopt;
@@ -337,10 +362,10 @@ inline std::vector<std::uint8_t> encodeErr(std::uint8_t reason, std::uint8_t pee
 }
 inline std::optional<ErrMsg> decodeErr(const std::uint8_t* p, std::size_t n) {
     if (!idIs(p, n, Id::Err)) return std::nullopt;
-    Reader r{p + 1, n - 1};
+    Reader r{p + 2, n - 2}; // 跳过 [id][ver] 两字节头
     ErrMsg m; m.reason = r.u8(); m.peerVersion = r.u8();
-    if (r.ok) return m;
-    return std::nullopt;
+    if (!r.ok || m.reason > kErrBusy) return std::nullopt; // reason 只定义 1/2
+    return m;
 }
 
 // ---- JOIN ----
@@ -354,7 +379,7 @@ inline std::vector<std::uint8_t> encodeJoin(const std::string& name, bool ready)
 }
 inline std::optional<JoinMsg> decodeJoin(const std::uint8_t* p, std::size_t n) {
     if (!idIs(p, n, Id::Join)) return std::nullopt;
-    Reader r{p + 1, n - 1};
+    Reader r{p + 2, n - 2}; // 跳过 [id][ver] 两字节头
     JoinMsg m; m.name = r.str(); m.ready = r.u8() != 0;
     if (r.ok) return m;
     return std::nullopt;
@@ -370,7 +395,7 @@ inline std::vector<std::uint8_t> encodeInp(const InputState& in) {
 }
 inline std::optional<InpMsg> decodeInp(const std::uint8_t* p, std::size_t n) {
     if (!idIs(p, n, Id::Inp)) return std::nullopt;
-    Reader r{p + 1, n - 1};
+    Reader r{p + 2, n - 2}; // 跳过 [id][ver] 两字节头
     InpMsg m;
     m.input.moveBits = r.u8();
     m.input.aim = decAngle(r.u16());
@@ -379,24 +404,7 @@ inline std::optional<InpMsg> decodeInp(const std::uint8_t* p, std::size_t n) {
     return std::nullopt;
 }
 
-// ---- SNAP ----
-inline std::vector<std::uint8_t> encodeSnap(const SnapMsg& s) {
-    std::vector<std::uint8_t> b = header(Id::Snap);
-    putU32(b, s.tick);
-    b.push_back(static_cast<std::uint8_t>(s.phase));
-    b.push_back(s.hp[0]); b.push_back(s.hp[1]);
-    for (int i = 0; i < 2; ++i) {
-        const TankSnap& t = s.tanks[i];
-        b.push_back(static_cast<std::uint8_t>(proto::encPos(t.x) & 0xFF));
-        // 完整写法: 分别 put i16
-    }
-    return b; // 占位, 下方为真实实现
-}
-```
-
-**上面 encodeSnap 的坦克/导弹循环按此实现替换占位**（计划里给完整版，编码器没有解析校验但同样拒绝超限导弹数）：
-
-```cpp
+// ---- SNAP ----（以下实现已干跑验证：0 警告、round-trip/坏包测试全绿）
 inline std::vector<std::uint8_t> encodeSnap(const SnapMsg& s) {
     std::vector<std::uint8_t> b = header(Id::Snap);
     putU32(b, s.tick);
@@ -430,7 +438,7 @@ inline std::vector<std::uint8_t> encodeSnap(const SnapMsg& s) {
 
 inline std::optional<SnapMsg> decodeSnap(const std::uint8_t* p, std::size_t n) {
     if (!idIs(p, n, Id::Snap)) return std::nullopt;
-    Reader r{p + 1, n - 1};
+    Reader r{p + 2, n - 2}; // 跳过 [id][ver] 两字节头
     SnapMsg s;
     s.tick = r.u32();
     const std::uint8_t phase = r.u8();
@@ -476,7 +484,7 @@ inline std::optional<SnapMsg> decodeSnap(const std::uint8_t* p, std::size_t n) {
 } // namespace proto
 ```
 
-注意：`decodeSnap` 读 `phase` 时先按裸 u8 存，校验后再转枚举（`Phase` 只有 0-3）。删除计划里第一个占位 `encodeSnap`，只保留完整版。
+注意：`decodeSnap` 读 `phase` 时先按裸 u8 存，校验后再转枚举（`Phase` 只有 0-3）。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -539,7 +547,9 @@ static InputState idle() { return {}; }
 static void testBattleCountdownThenControls() {
     BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
     InputState in[2] = {idle(), idle()};
-    for (int i = 0; i < 90; ++i) stepBattle(s, d, in, 1.f / 30.f); // 3 秒倒计时
+    // 步进到倒计时结束(90 步=2.997s, 浮点累积误差可能差 1 步, 用条件循环)
+    for (int i = 0; i < 120 && s.phase == BattlePhase::Countdown; ++i)
+        stepBattle(s, d, in, 1.f / 30.f);
     CHECK(s.phase == BattlePhase::Battle);
     in[0].moveBits = 0x01; // W
     stepBattle(s, d, in, 1.f / 30.f);
@@ -556,8 +566,10 @@ static void testBattleFenceAndCooldown() {
     in[0].moveBits = 0x01;                              // 一路向上顶到 maxY
     for (int i = 0; i < 600; ++i) stepBattle(s, d, in, 1.f / 30.f);
     CHECK(s.tanks[0].pos.y <= d.maxY);
-    // 连发冷却: 首帧可发, 下一帧(同按住)不可
-    in[0].moveBits = 0; in[0].fire = true;
+    // 连发冷却: 首帧可发, 下一帧(同按住)不可。注意开火帧导弹即前进一步
+    // (与单人同帧序一致), 炮口必须朝向开阔方向: 朝右(90°)时导弹路径
+    // (0,100)->(100,100)->(200,100) 全程在舞台 ±240/±180 内不会出界消失
+    in[0].moveBits = 0; in[0].fire = true; in[0].aim = 90.f;
     stepBattle(s, d, in, 1.f / 30.f);
     CHECK(s.missiles.size() == 1 && s.fired[0]);
     stepBattle(s, d, in, 1.f / 30.f);
@@ -567,17 +579,17 @@ static void testBattleFenceAndCooldown() {
 static void testBattleMissileOwnerNoSelfHit() {
     BattleDefs d = testDefs(); BattleState s; resetBattle(s, d);
     s.phase = BattlePhase::Battle;
-    // 玩家0原地朝上开炮: 导弹从自己位置出生, 不得命中自己
-    InputState in[2] = {idle(), idle()};
-    in[0].fire = true; in[0].aim = 0.f;
-    stepBattle(s, d, in, 1.f / 30.f);
+    s.tanks[0].pos = {50.f, -50.f}; // 错开 x: 导弹路径 x=50 不经过任何坦克
+    InputState in[2] = {idle(), idle()};     // (双方原出生点相距恰 100=导弹一步,
+    in[0].fire = true; in[0].aim = 0.f;      //  原地朝上开炮会开火帧即命中对方)
+    stepBattle(s, d, in, 1.f / 30.f); // 出生帧即前进一步: (50,-50)->(50,50)
     in[0].fire = false;
-    stepBattle(s, d, in, 1.f / 30.f); // 飞一帧(仍在场, y=-50+100=50 未出 ±180)
-    CHECK(s.hp[0] == 3 && s.tanks[0].state == TankState::Alive);
-    CHECK(s.missiles.size() == 1);    // 未被"打到自己"吞掉
+    CHECK(s.missiles.size() == 1);    // 没被"打到自己"吞掉
+    CHECK(s.hp[0] == 3 && s.hp[1] == 3 && // 也没打到对方(路径已错开)
+          s.tanks[0].state == TankState::Alive);
     for (int i = 0; i < 6; ++i) stepBattle(s, d, in, 1.f / 30.f);
     CHECK(s.missiles.empty());        // 飞出舞台上界即消失
-    CHECK(s.hp[0] == 3);              // 全程没碰过自己
+    CHECK(s.hp[0] == 3 && s.hp[1] == 3);
 }
 
 static void testBattleHitHpRespawnInvuln() {
@@ -595,11 +607,19 @@ static void testBattleHitHpRespawnInvuln() {
     stepBattle(s, d, in, 1.f / 30.f);
     CHECK(s.tanks[1].pos == d.spawn[1]);                // 没动
     in[1].moveBits = 0; in[1].fire = false;             // 清输入, 别让测试自造导弹
-    // 爆炸 6 帧后回出生点+无敌, 朝向/炮塔重置
-    for (int i = 0; i < 30; ++i) stepBattle(s, d, in, 1.f / 30.f);
-    CHECK(s.tanks[1].state == TankState::Invulnerable);
-    CHECK(s.tanks[1].pos == d.spawn[1] && s.tanks[1].dir == 180.f);
-    CHECK(near(s.tanks[1].turret, 180.f));
+    // 爆炸 6 帧后回出生点+无敌; 转换帧上朝向/炮塔被重置为 spawnDir(180),
+    // 之后各帧 turret 恒等于上报 aim(炮塔永远跟随输入)——所以炮塔断言
+    // 只能在转换帧当步做
+    bool respawned = false;
+    for (int i = 0; i < 30 && !respawned; ++i) {
+        stepBattle(s, d, in, 1.f / 30.f);
+        if (s.tanks[1].state == TankState::Invulnerable) {
+            respawned = true;
+            CHECK(s.tanks[1].pos == d.spawn[1] && s.tanks[1].dir == 180.f);
+            CHECK(near(s.tanks[1].turret, 180.f));
+        }
+    }
+    CHECK(respawned);
     // 无敌期导弹正中也不扣血: 放"下一步正好落在坦克1 身上"的导弹
     s.missiles.push_back({{0.f, -50.f}, 0.f, 0}); // 下一步到 (0,50)=坦克1 中心
     for (int i = 0; i < 5; ++i) stepBattle(s, d, in, 1.f / 30.f);
@@ -680,7 +700,7 @@ main() 追加调用这 7 个函数。
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /d/Berton/Tank-Battle/tank-battle-cpp && "/d/Scoop/apps/msys2/current/ucrt64/bin/g++.exe" -std=c++20 -O1 -Wall -Wextra -Wshadow -Wconversion tests/unit_tests.cpp src/Battle.cpp -o unit_tests.exe -lsfml-system && ./unit_tests.exe`
+Run: `cd /d/Berton/Tank-Battle/tank-battle-cpp && "/d/Scoop/apps/msys2/current/ucrt64/bin/g++.exe" -B"D:/Scoop/apps/msys2/current/ucrt64/bin/" -std=c++20 -O1 -Wall -Wextra -Wshadow -Wconversion tests/unit_tests.cpp src/Battle.cpp -o unit_tests.exe -lsfml-system && ./unit_tests.exe`
 Expected: 编译失败 `Battle.hpp: No such file`。
 
 - [ ] **Step 3: 写实现**
@@ -959,7 +979,8 @@ public:
     // 客户端侧
     const std::vector<FoundHost>& foundHosts() const;
     const std::optional<proto::SnapMsg>& snap() const; // 最新已接受快照(>才更新)
-    void sendInput(const InputState& in); // 战斗期 30Hz(空闲也发全零, 暂停判定依赖)
+    bool peerRecent() const;      // 对端 KEEP/任一包 5 秒内仍在(客户端兜底标签用)
+    void sendInput(const InputState& in); // 倒计时/战斗/暂停期 30Hz(空闲也发全零)
     void setReady(bool r);                // R 状态随 JOIN 5Hz 上报
 
     std::vector<NetEvent> takeEvents();
@@ -986,16 +1007,16 @@ inline float secsSince(Clock::time_point t) {
 } // namespace
 
 // 成员(NetSession.hpp private):
-//   角色/阶段枚举 Role{None,HostWaiting,HostSession,Scan,Joining,ClientSession}
+//   角色枚举 Role{None,HostWaiting,HostSession,Scan,ScanDone,Joining,ClientSession}
 //   sf::UdpSocket sock_;      // 主收发(非阻塞; 客户端首次 send 自动绑随机端口)
 //   sf::UdpSocket keepSock_;  // 心跳专用(仅后台线程 send; SFML socket 非线程安全)
 //   std::jthread keepThread_; // 1Hz KEEP -> 对端主端口(语音 voicePingThread 同款)
 //   sf::IpAddress peerIp_; unsigned short peerPort_ = 0; // 对端主端口
 //   std::string myName_, peerName_; bool peerReady_ = false;
-//   InputState remoteInput_; Clock::time_point lastAny_, lastInp_;
+//   InputState remoteInput_; Clock::time_point lastAny_, lastInp_, scanStart_;
 //   std::uint32_t outTick_ = 0, lastSnapTick_ = 0;
 //   std::optional<proto::SnapMsg> snap_;
-//   std::vector<FoundHost> hosts_; Clock::time_point scanEnd_;
+//   std::vector<FoundHost> hosts_;
 //   float joinTimer_ = 0.f, scanTimer_ = 0.f; // 5Hz 重发计时
 //   bool connected_ = false, disconnectedFired_ = false;
 //   std::vector<NetEvent> events_;
@@ -1004,25 +1025,32 @@ inline float secsSince(Clock::time_point t) {
 poll() 主干（收包循环 + 过滤，buf 1024）：
 
 ```cpp
-void NetSession::poll(float) {
+void NetSession::poll(float dt) {
     // --- 周期发送 ---
     if (role_ == Role::Scan || role_ == Role::Joining) {
         scanTimer_ -= dt;
         if (role_ == Role::Scan && scanTimer_ <= 0.f) { // DISC 5Hz 广播
-            sock_.send(disc.data(), disc.size(), sf::IpAddress::Broadcast, Port);
+            const auto d = proto::encodeDisc();
+            sock_.send(d.data(), d.size(), sf::IpAddress::Broadcast, Port);
             scanTimer_ = 0.2f;
             if (secsSince(scanStart_) >= 2.f) {
-                role_ = Role::ScanDone; events_.push_back({NetEvent::Kind::ScanDone});
+                role_ = Role::ScanDone; // 扫描窗口结束(结果在 foundHosts_)
+                events_.push_back({NetEvent::Kind::ScanDone});
             }
         }
         if (role_ == Role::Joining) { // JOIN 5Hz(连接成功前)
             joinTimer_ -= dt;
             if (joinTimer_ <= 0.f) { sendJoin(); joinTimer_ = 0.2f; }
         }
+    } else if (role_ == Role::ClientSession) {
+        // 会话期: 结算/大厅态(最近 snap 非 Battle/Paused/Countdown)由 poll
+        // 以 5Hz 重发 JOIN(携 ready 位); 对局态不发(INP 由 sendInput 30Hz)
+        joinTimer_ -= dt;
+        const bool inGame = snap_ && (snap_->phase == proto::Phase::Countdown ||
+                                      snap_->phase == proto::Phase::Battle ||
+                                      snap_->phase == proto::Phase::Paused);
+        if (joinTimer_ <= 0.f && !inGame) { sendJoin(); joinTimer_ = 0.2f; }
     }
-    // 客户端会话期: 大厅/结算期由 poll 以 5Hz 重发 JOIN(携 ready 位),
-    // 战斗期不重发(改由 sendInput 按 30Hz 发 INP)——判据用 snap_ 的 phase
-    // (实现于"成员行为规格"段)
     // --- 收包(每次 poll 收尽) ---
     for (int i = 0; i < 64; ++i) {
         std::size_t got = 0; std::optional<sf::IpAddress> from; unsigned short fport = 0;
@@ -1056,8 +1084,9 @@ void NetSession::handlePacket(const std::uint8_t* p, std::size_t n,
         return;
 
     switch (static_cast<proto::Id>(p[0])) {
-    case proto::Id::Disc: // 仅主机等待期回应 HOST(战斗中对局域网不可见)
-        if (role_ == Role::HostWaiting && ver == proto::kVersion) {
+    case proto::Id::Disc: // 仅主机等待期回应(战斗中对局域网不可见); 版本不符回 ERR
+        if (role_ == Role::HostWaiting) {
+            if (ver != proto::kVersion) { replyErr(ip, port, proto::kErrVersion, ver); break; }
             const auto h = proto::encodeHost(myName_);
             sock_.send(h.data(), h.size(), ip, port);
         }
@@ -1137,7 +1166,7 @@ void NetSession::handlePacket(const std::uint8_t* p, std::size_t n,
 }
 ```
 
-其余成员（执行者实现，行为规格）：`startHost`：`sock_.setBlocking(false); bind(Port)` 失败→false；`startScan/startJoin`：客户端 socket 非阻塞、不预绑定（首次 send 自动分配）；`startKeepalive`：`keepThread_ = std::jthread([this](std::stop_token st){ 每 1s 用 keepSock_ 发 encodeKeep() 到对端主端口, 语音心跳同款 10×100ms 睡眠循环 })`；`sendSnap`：`++outTick_; msg.tick = outTick_; encode; send(peerIp_, peerPort_)`（**outTick_ 永不重置——C1**）；`sendInput`：编码 INP 发往 `peerIp_/Port`（主机侧主端口固定 52021）；`setReady/remoteReady` 随 JOIN 夹带（客户端在 ClientSession 且非战斗态时由 poll 5Hz 重发 JOIN 携带 ready——实现：`ClientSession` 且 `snap_` 无或 phase!=Battle 时 5Hz 发 JOIN）；`remoteInputStale`：`role_==HostSession && secsSince(lastInp_) > 1.f && secsSince(lastAny_) <= 5.f`；`close(sendBye)`：尽力发 BYE→request_stop+join 线程→unbind。
+其余成员（执行者实现，行为规格）：`startHost`：`sock_.setBlocking(false); bind(Port)` 失败→false；`startScan/startJoin`：客户端 socket 非阻塞、不预绑定（首次 send 自动分配）；`startKeepalive`：`keepThread_ = std::jthread([this](std::stop_token st){ 每 1s 用 keepSock_ 发 encodeKeep() 到对端主端口, 语音心跳同款 10×100ms 睡眠循环 })`；`sendSnap(const proto::SnapMsg& s)`：**先拷贝再填 tick**——`proto::SnapMsg m = s; m.tick = ++outTick_; auto b = proto::encodeSnap(m); sock_.send(b.data(), b.size(), peerIp_, peerPort_)`（outTick_ 永不重置——C1）；`sendInput`：编码 INP 发往对端主端口；`setReady/remoteReady`：ready 随 JOIN 夹带（poll 的 5Hz 分支）；`remoteInputStale`：`connected_ && secsSince(lastInp_) > 1.f && secsSince(lastAny_) <= 5.f`（**阶段闸在调用方**：Game 仅 Battle 相位询问，倒计时/结算不算停滞）；`peerRecent`：`connected_ && secsSince(lastAny_) <= 5.f`；`close(sendBye)`：尽力发 BYE→request_stop+join 线程→unbind。
 
 - [ ] **Step 3: build.bat 游戏编译行追加 + CRLF 校验**
 
@@ -1221,7 +1250,7 @@ int main() {
 
 编译并启动（后台）：
 
-Run: `cd /d/Berton/Tank-Battle/tank-battle-cpp && "/d/Scoop/apps/msys2/current/ucrt64/bin/g++.exe" -std=c++20 -O1 -Wall -Wextra -Wshadow -Wconversion tests/net_host_stub.cpp src/Battle.cpp src/NetSession.cpp -o net_host_stub.exe -lsfml-network -lsfml-system && ./net_host_stub.exe &`
+Run: `cd /d/Berton/Tank-Battle/tank-battle-cpp && "/d/Scoop/apps/msys2/current/ucrt64/bin/g++.exe" -B"D:/Scoop/apps/msys2/current/ucrt64/bin/" -std=c++20 -O1 -Wall -Wextra -Wshadow -Wconversion tests/net_host_stub.cpp src/Battle.cpp src/NetSession.cpp -o net_host_stub.exe -lsfml-network -lsfml-system && ./net_host_stub.exe &`
 Expected: 输出 `[stub] t=0s joined=0`（等待客户端）。
 
 - [ ] **Step 2: 写 net_smoke.py**（独立协议实现；`python net_smoke.py 127.0.0.1`）
@@ -1353,6 +1382,18 @@ s2.sendto(join("intruder"), (HOST, PORT))
 b, _ = s2.recvfrom(2048)
 expect(b[0] == 3 and b[2] == 2, "busy ERR for third-party JOIN")
 
+# 6.5) 源过滤: 陌生端口(s2)伪造 SNAP/BYE 直发主机, 必须被无反响地丢弃
+#      (非对端 IP 维度本机回环测不了, 显式移交 Task 8 双机清单)
+for fake in (bytes([6, VER]) + b"\xff" * 40, bytes([7, VER])):
+    s2.sendto(fake, (HOST, PORT))
+sn = None
+for _ in range(30):
+    s.sendto(inp(0, 0.0, False), (HOST, PORT))
+    sn = next_snap(0.5)
+    if sn and sn["phase"] == 1:
+        break
+expect(sn and sn["phase"] == 1, "forged SNAP/BYE ignored (source filter)")
+
 # 7) 暂停(N1): 停发 INP 1.5s(KEEP 照发), 必须收到 phase=3 且 tick 前进
 t0 = time.time()
 paused = None
@@ -1377,7 +1418,9 @@ print("ALL SMOKE CHECKS PASSED")
 - [ ] **Step 3: 跑通冒烟**
 
 Run: `"F:/program files/python313/python.exe" tools/net_smoke.py 127.0.0.1`（stub 在另一终端跑着）
-Expected: 8 行 `PASS:` + `ALL SMOKE CHECKS PASSED`。
+Expected: 9 行 `PASS:`（含 6.5 源过滤）+ `ALL SMOKE CHECKS PASSED`。
+**跑完立刻杀掉 stub**（它占着 52021，残留会让 Task 5 起的所有建主局/双开手测绑不上端口）：
+Run: `taskkill //IM net_host_stub.exe //F 2>/dev/null; true`
 
 - [ ] **Step 4: 单人冒烟确认未受影响 + Commit**
 
@@ -1445,12 +1488,18 @@ private 新增：
     BattleState battle_;                // 主机模拟用
     NetView view_;                      // 客户端渲染用
     bool netLocalReady_ = false;        // 本机 R(结算期)
+    bool netWasOver_ = false;           // 客户端: 用于 Over->新局跳变时清 ready
     bool joiningStarted_ = false;       // 客户端: 扫描选定主机后置位
+    float netJoinWait_ = 0.f;           // 客户端: JOIN 后等首个 SNAP 的计时(5s)
     float netBlinkTimer_ = 0.f;         // 无敌闪烁时钟(0.1s 翻转)
-    void updateTurretLocal(float dt);   // 从 updatePlayer 抽出的炮塔跟随段
-                                        // (鼠标/←→/语音; 单人调用点行为不变,
-                                        //  NetHost/NetClient 每帧也要调它,
-                                        //  否则 player.turretDir 不再更新)
+    static std::string machineName();   // COMPUTERNAME 兜底 "host"/"client"
+    // 从单人 updatePlayer 抽出的炮塔跟随段(仅 Game.cpp:161-183 的函数体,
+    // **守卫 if(phase!=Title&&...) 留在单人调用点不进函数**——联机会话期间
+    // Game::phase 恒为 Title, 守卫进了函数体联机炮塔就永远不更新):
+    // 鼠标跟随的 pointDirection 锚点改用参数(单人传 player.pos; 主机传
+    // battle_.tanks[0].pos; 客户端传 view_.snap.tanks[1].pos——单人结构
+    // player.pos 在联机中恒 {0,0}, 沿用会系统性偏瞄)
+    void updateTurretLocal(float dt, sf::Vector2f anchorPos);
 ```
 
 - [ ] **Step 2: Game.cpp 实现接线**（`#include "NetSession.hpp"` 置顶；析构 `Game::~Game(){ if (net_) net_->close(true); }` —— Game 原来无析构，声明加上）
@@ -1462,10 +1511,13 @@ private 新增：
 //   H -> mode_==Solo && phase==Title 时 netStartHost()
 //   J -> mode_==Solo && phase==Title 时 netStartScan()
 // Esc: mode_ != Solo 时 netLeave() 而不是 quit=true
+std::string Game::machineName() {
+    const char* cn = std::getenv("COMPUTERNAME");
+    return cn ? cn : "host";
+}
 void Game::netStartHost() {
     auto n = std::make_unique<NetSession>();
-    const char* cn = std::getenv("COMPUTERNAME");
-    if (!n->startHost(cn ? cn : "host")) {
+    if (!n->startHost(machineName())) {
         std::cout << "[net] 52021 被占用(已有机局?), 回标题\n";
         return; // 端口占用提示(渲染文字在 Task 6)
     }
@@ -1473,12 +1525,11 @@ void Game::netStartHost() {
 }
 void Game::netStartScan() {
     net_ = std::make_unique<NetSession>();
-    net_->startScan(std::getenv("COMPUTERNAME") ? std::getenv("COMPUTERNAME") : "client");
+    net_->startScan(machineName());
     mode_ = Mode::NetClient;
 }
 void Game::netStartJoin(sf::IpAddress host) {
-    net_->startJoin(host,
-                    std::getenv("COMPUTERNAME") ? std::getenv("COMPUTERNAME") : "client");
+    net_->startJoin(host, machineName());
 }
 void Game::netLeave() {
     if (net_) net_->close(true);
@@ -1524,10 +1575,14 @@ void Game::netUpdateHost(float dt) {
         netDefs_.missileSize = 0.50f;
         resetBattle(battle_, netDefs_);
     }
-    // 本机炮塔沿用单人 updatePlayer 的跟随/手转/语音逻辑 -> 作为 aim 上报;
-    // 主机自己的移动不用单人路径, 全部走 Battle(单一真相源)
+    // 本机炮塔沿用单人跟随/手转/语音逻辑 -> 作为 aim 上报; 锚点=主机坦克位置
+    // (守卫已在单人调用点外, 这里无条件调); 主机自己的移动不走单人路径,
+    // 全部经 Battle(单一真相源)
+    updateTurretLocal(dt, battle_.tanks[0].pos);
     InputState in[2] = {buildLocalInput(), net_->remoteInput()};
-    const bool paused = net_->remoteInputStale();
+    // 暂停判定仅战斗阶段适用(spec §6.3); 倒计时/结算期客户端不发 INP 不算停滞
+    const bool paused = battle_.phase == BattlePhase::Battle &&
+                        net_->remoteInputStale();
     if (!paused) stepBattle(battle_, netDefs_, in, dt);
     for (int i = 0; i < 2; ++i) {          // 本机音效(事件)
         if (battle_.fired[i] && a.sndFirePlayer) playSound(*a.sndFirePlayer);
@@ -1548,12 +1603,33 @@ void Game::netUpdateClient(float dt) {
     net_->poll(dt);
     netHandleEvents();
     // 扫描期: 2s 后有结果(0 个->提示重试; >=1 个->startJoin 第一个)
-    // (多个主机列表选择 UI 在 Task 6; 先自动连第一个)
+    // (多个主机列表选择 UI 在 Task 6 Step 2.5; 先自动连第一个)
     if (!view_.has && net_ && !net_->foundHosts().empty() && !joiningStarted_) {
         netStartJoin(net_->foundHosts().front().addr);
         joiningStarted_ = true;
+        netJoinWait_ = 0.f;
     }
-    net_->sendInput(buildLocalInput());      // 战斗期无条件 30Hz(全零也发)
+    // 连接超时(spec §4/§7): JOIN 发出 5 秒无任何 SNAP(--join 写错 IP/对端
+    // 死亡) -> 退回扫描, 不停在无反馈画面
+    if (!view_.has && joiningStarted_) {
+        netJoinWait_ += dt;
+        if (netJoinWait_ > 5.f) {
+            netJoinWait_ = 0.f;
+            joiningStarted_ = false;
+            net_->startScan(machineName());
+        }
+    }
+    // 本机炮塔跟随(锚点=客户端坦克快照位置); INP 倒计时起即 30Hz 发
+    // (结算期不发, 改由 NetSession 5Hz 发 JOIN 带 ready 位)
+    updateTurretLocal(dt, view_.has
+                                ? sf::Vector2f(view_.snap.tanks[1].x,
+                                               view_.snap.tanks[1].y)
+                                : sf::Vector2f(0.f, 120.f));
+    const bool inGame = view_.has &&
+        (view_.snap.phase == proto::Phase::Countdown ||
+         view_.snap.phase == proto::Phase::Battle ||
+         view_.snap.phase == proto::Phase::Paused);
+    if (inGame) net_->sendInput(buildLocalInput()); // 空闲也发全零, 暂停判定依赖
     if (net_->snap()) {
         const proto::SnapMsg& sn = *net_->snap();
         const bool nowCd = sn.phase == proto::Phase::Countdown;
@@ -1565,11 +1641,16 @@ void Game::netUpdateClient(float dt) {
             if (sn.events.fire[i] && a.sndFirePlayer) playSound(*a.sndFirePlayer);
             if (sn.events.hit[i] && a.sndExplosion) playSound(*a.sndExplosion);
         }
+        // Over->新局跳变: 清本机 ready(I-C, 否则第二局主机单边 R 即重开)
+        if (sn.phase != proto::Phase::Over && netWasOver_) netLocalReady_ = false;
+        netWasOver_ = sn.phase == proto::Phase::Over;
     } else {
-        view_.noSnapSince += dt;             // >1s 且未掉线 -> 兜底暂停标签(N7)
+        view_.noSnapSince += dt; // >1s 且对端 KEEP 仍活 -> 兜底暂停标签(N7/M-4,
+                                 //  真掉线 1-5s 间隙不误显, 见 Task 6 渲染条件)
     }
-    if (view_.has) view_.countdownLocal -= dt;
-    if (view_.snap.phase == proto::Phase::Over) {
+    if (view_.has && view_.snap.phase == proto::Phase::Countdown)
+        view_.countdownLocal -= dt;
+    if (view_.has && view_.snap.phase == proto::Phase::Over) {
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R)) netLocalReady_ = true;
         net_->setReady(netLocalReady_);      // 随 JOIN 5Hz 上报, 主机收双方 R 重开
     }
@@ -1581,8 +1662,11 @@ void Game::netHandleEvents() {
             std::cout << "[net] 对方已离开, 回标题\n";
             netLeave();
         } else if (ev.kind == NetEvent::Kind::Busy) {
-            std::cout << "[net] 对局进行中\n";
-            netLeave();
+            // spec §4: busy 退回扫描页(不是回标题)
+            std::cout << "[net] 对局进行中, 重新扫描\n";
+            joiningStarted_ = false; netJoinWait_ = 0.f;
+            view_ = NetView{};
+            net_->startScan(machineName());
         } else if (ev.kind == NetEvent::Kind::VersionMismatch) {
             std::cout << "[net] 版本不一致, 请两台机器使用同一份构建\n";
             netLeave();
@@ -1641,7 +1725,7 @@ git commit -m "Game 集成联机 A：模式入口 H/J/Esc 离场、BattleDefs �
         }
 ```
 
-- [ ] **Step 2: 联机战斗渲染**（render() 的 else 分支前加 `if (mode_ != Mode::Solo) { renderNet(target); return; }`；新增私有 `void renderNet(sf::RenderWindow&) const`）：
+- [ ] **Step 2: 联机战斗渲染**（render() 的 `target.clear();` 之后、背景绘制**之前**插入 `if (mode_ != Mode::Solo) { renderNet(target); return; }`——renderNet 自己画背景，插在背景之后会画两次；新增私有 `void renderNet(sf::RenderWindow&) const`。注意**不要**插进 `if (phase == Title)…else` 结构里：联机会话期间 `Game::phase` 恒为 Title（这是复用标题渲染底的既有约定），插在 else 前后都会让联机画面走单人标题分支）：
 
 ```cpp
 // 联机画面: 主机画 battle_, 客户端画 view_.snap; 己方炮塔本地覆盖(跟手)
@@ -1706,17 +1790,25 @@ void Game::renderNet(sf::RenderWindow& target) const {
             }
         }
         drawNetHud(target); // 血条(下方 Step 3)
-        // 结算画面 + 胜者文字 + 双 R 提示; 暂停标签(phase==3 或 客户端兜底)
+        // 结算画面 + 胜者文字 + 双 R 提示; 暂停标签条件:
+        //   phase==3(主机发的暂停) 或(phase==1 且 view_.noSnapSince>1 且
+        //   net_->peerRecent()——KEEP 仍活才显示, 真掉线 1-5s 间隙不误显"暂停中")
     }
 }
 ```
 
 （执行者补全注释处的居中绘制/结算/暂停文字，文字常量见 Task 7 字体清单；结算判定：主机 `battle_.winner`，客户端 `view_.snap.hp` 推导——hp0/hp1 均归零=平局。）
 
-注意客户端的己方炮塔跟手依赖 `player.turretDir` 仍在被更新——**把单人
-`updatePlayer` 的炮塔跟随段（Game.cpp:160-184）原样抽成
-`updateTurretLocal(dt)`**：单人路径调用点行为零变化（只是拆函数），
-`netUpdateHost` 与 `netUpdateClient` 每帧先调它再 buildLocalInput()。
+注意己方炮塔跟手依赖 `player.turretDir` 仍在被更新——**把单人 `updatePlayer`
+的炮塔跟随段（Game.cpp:161-183 的函数体）抽成
+`updateTurretLocal(float dt, sf::Vector2f anchorPos)`**，两个关键点（C-3）：
+① 守卫 `if (phase != Phase::Title && …)`（Game.cpp:160）**留在单人调用点**，
+不进函数体——联机会话期间 `Game::phase` 恒为 Title，守卫进了函数体则联机
+炮塔永远不更新（鼠标/←→/语音全失效）；② 函数内 `pointDirection` 的锚点
+改用参数：单人调用点传 `player.pos`（行为零变化），`netUpdateHost` 传
+`battle_.tanks[0].pos`、`netUpdateClient` 传 `view_.snap.tanks[1].pos`
+（Task 5 代码已按此调用；单人结构 `player.pos` 在联机中恒 {0,0}，沿用会
+系统性偏瞄）。
 
 - [ ] **Step 2.5: 扫描结果列表 UI（多主机时数字键选择，spec §4）**：
   客户端扫描 2 秒（等 `ScanDone` 事件）后仍无连接时，若 `foundHosts()` 非空
@@ -1741,7 +1833,7 @@ Expected: 全部符合；不符则按 spec 对应节修。
 
 ```bash
 git add src/Game.cpp src/Game.hpp
-git commit -m "Game 集成联机 B：双坦克渲染（客户端蓝色 tint/爆炸帧/无敌闪烁）、己方炮塔本地跟手、血条 HUD、结算与平局画面、双 R 重开、暂停标签（phase=3 与客户端兜底）；单人渲染路径零改动"
+git commit -m "Game 集成联机 B：双坦克渲染（客户端蓝色 tint/爆炸帧/无敌闪烁）、己方炮塔本地跟手、血条 HUD、结算与平局画面、双 R 重开、暂停标签（phase=3 与客户端兜底）；单人玩法路径零改动（仅标题新增一行联机提示，README 已记）"
 ```
 
 ---
@@ -1826,12 +1918,14 @@ Expected: 四步全绿，0 警告，DLL 闭包 25 个不变（deploy_dlls.py 输
   3. 双实例手动全流程（Task 6 Step 5 清单）
   Expected: 全过。
 
-- [ ] **Step 3: 双机真机验收**（拿另一台电脑，拷整个 tank-battle-cpp 目录）按 README 清单逐项打勾；不过项记录并修。
+- [ ] **Step 3: 双机真机验收**（拿另一台电脑，拷整个 tank-battle-cpp 目录）按 README 清单逐项打勾；清单须含**非对端 IP 伪造包被丢弃**（第三台机器向双方各发伪造 SNAP/BYE/JOIN，对局不受影响——本机回环冒烟只覆盖了"同 IP 异端口"维度）；不过项记录并修。
 
-- [ ] **Step 4: 终审提交**
+- [ ] **Step 4: 清理 + 终审提交**（显式列举文件，**不用 `git add -A`**——工作区可能有用户的其他改动）
+
+Run: `taskkill //IM net_host_stub.exe //F 2>/dev/null; true`（stub 会占住 52021，残留进程让下次建主局失败）
 
 ```bash
-git add -A
+git add src tests/unit_tests.cpp tests/net_host_stub.cpp tools/net_smoke.py tools/subset_font.py assets/fonts/NotoSansSC-Game.otf README.md build.bat ../AGENTS.md
 git commit -m "联机对战收尾：全量验证通过（build 四步/单人冒烟/协议冒烟/双机清单）"
 ```
 
@@ -1840,6 +1934,6 @@ git commit -m "联机对战收尾：全量验证通过（build 四步/单人冒�
 ## Self-Review 记录
 
 - **Spec 覆盖**：§3 分层=Task 1-3；§4 流程=Task 5/6；§5.1/5.2=Task 2（数值表逐项落 BattleDefs 与 stepBattle）；§6.1-6.4=Task 1（编解码+校验+accept）/Task 3（过滤/KEEP/忙碌/tick 单调）；§7=Task 3/5；§8=Task 1/2 单测+Task 4 冒烟+Task 6/8 回归；§9=Task 7；§11 顺序=任务序。无缺口。
-- **占位符**：Task 1 的 encodeSnap 故意展示了"占位→完整版"两段，执行者须只保留完整版（已显式标注）；Task 6 Step 2 有两处"执行者补全"（居中绘制/结算文字），给出了判定规则与文字来源（Task 7 字体清单），不算 TBD——若执行中发现文字集合缺失，以 NEWUI 全集兜底。
+- **占位符**：原稿 Task 1 的 encodeSnap 占位双版本已按计划评审删除，保留干跑验证过的唯一版本；Task 6 Step 2 有两处"执行者补全"（居中绘制/结算文字），给出了判定规则与文字来源（Task 7 字体清单），不算 TBD——若执行中发现文字集合缺失，以 NEWUI 全集兜底。Task 1/2 的全部代码块与测试已在本机干跑（g++ 同参数编译 + 运行，0 警告全绿），这是本轮计划定稿的新门禁。
 - **类型一致性**：InputState/ proto::SnapMsg/ TankSnap/ BattleState/ NetSession API 在各任务间已逐一对照（makeSnap 的 BattlePhase→proto::Phase 枚举值 0/1/2 对齐，paused=3 覆盖）。
 - **Review Focus → 测试映射**：见各 Focus 行尾注。
