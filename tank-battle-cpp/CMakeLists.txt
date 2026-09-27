@@ -6,13 +6,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(SFML 3 REQUIRED COMPONENTS Graphics Audio Window System)
 
-add_executable(tank-battle
-    src/main.cpp
-    src/Assets.cpp
-    src/Game.cpp
-)
+# exe 图标资源(仅 Windows; windres 经 include 路径 res/ 查找 tank.ico)
+set(TB_SOURCES src/main.cpp src/Assets.cpp src/Game.cpp)
+if(WIN32)
+    list(APPEND TB_SOURCES res/app_icon.rc)
+endif()
+
+add_executable(tank-battle ${TB_SOURCES})
 target_link_libraries(tank-battle PRIVATE
     SFML::Graphics SFML::Audio SFML::Window SFML::System)
+if(WIN32)
+    target_include_directories(tank-battle PRIVATE res)
+endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(tank-battle PRIVATE -Wall -Wextra -Wshadow -Wconversion)
 endif()

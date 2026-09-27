@@ -38,6 +38,10 @@ int main(int argc, char* argv[]) {
                             sf::Style::Default);
     window.setFramerateLimit(60);
     setupView(window);
+    // 运行中的窗口/任务栏图标(Explorer 里 exe 文件的图标由 res/app_icon.rc 嵌入)
+    sf::Image icon;
+    if (icon.loadFromFile("res/tank_icon.png"))
+        window.setIcon(icon.getSize(), icon.getPixelsPtr());
 
     Game game(assets, window);
 

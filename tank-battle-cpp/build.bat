@@ -22,8 +22,14 @@ set PATH=%U%\bin;%PATH%
 cd /d %~dp0
 
 echo [1/4] compiling...
+rem exe 图标资源(绝对路径调用: 本机 cmd 的 PATH 搜索同被安全软件干扰)
+"%U%\bin\windres.exe" -I res res\app_icon.rc -O coff -o app_icon.res.o
+if errorlevel 1 (
+    echo [error] windres failed
+    exit /b 1
+)
 g++ -B%U%\bin\ -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion ^
-    src/main.cpp src/Assets.cpp src/Game.cpp ^
+    src/main.cpp src/Assets.cpp src/Game.cpp app_icon.res.o ^
     -o tank-battle.exe ^
     -lsfml-graphics -lsfml-audio -lsfml-window -lsfml-system
 if errorlevel 1 (

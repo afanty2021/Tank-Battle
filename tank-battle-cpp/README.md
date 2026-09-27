@@ -28,6 +28,7 @@ tank-battle-cpp/
 │   ├── common.hpp     Scratch 舞台坐标/方向体系换算 + 碰撞几何（可独立单测）
 │   ├── Assets.hpp/cpp 素材加载；造型元数据（旋转中心、偏心碰撞盒）
 │   └── Game.hpp/cpp   全部游戏逻辑（状态机 + 实体更新 + 渲染）
+├── res/               图标资源（tank.ico/tank_icon.png + app_icon.rc，tools/make_icon.py 生成）
 ├── tests/
 │   └── unit_tests.cpp 坐标换算/方向体系/碰撞几何（含偏心盒回归）单元测试
 ├── tools/
