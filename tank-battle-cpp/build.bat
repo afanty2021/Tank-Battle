@@ -34,6 +34,7 @@ rem of the .NET framework dir, hence the full-path reference below.
 set CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe
 if not exist "%CSC%" set CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe
 set SSP=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\WPF\System.Speech.dll
+if not exist "%SSP%" set SSP=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\WPF\System.Speech.dll
 "%CSC%" /nologo /codepage:65001 /target:exe /r:"%SSP%" /out:tools\voice_control.exe tools\voice_control.cs
 if errorlevel 1 (
     echo [warn] voice_control build failed - game runs without voice control

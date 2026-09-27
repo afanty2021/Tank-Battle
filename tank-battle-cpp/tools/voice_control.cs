@@ -78,9 +78,11 @@ class VoiceControl
         eng.LoadGrammar(Mk(cult, "FIRE", new string[] { "开炮", "发射", "开火" }));
         eng.LoadGrammar(Mk(cult, "STOP", new string[] { "停", "停止" }));
         eng.LoadGrammar(Turret(cult, "TURRET_CW",
-            new string[] { "顺时针", "顺时针旋转", "向右转", "右转" }));
+            new string[] { "顺时针", "顺时针转", "顺时针旋转",
+                           "向右转", "向右旋转", "右转" }));
         eng.LoadGrammar(Turret(cult, "TURRET_CCW",
-            new string[] { "逆时针", "逆时针旋转", "向左转", "左转" }));
+            new string[] { "逆时针", "逆时针转", "逆时针旋转",
+                           "向左转", "向左旋转", "左转" }));
         eng.LoadGrammar(Mk(cult, "MOVE_UP", new string[] { "上移", "向上移动", "前进" }));
         eng.LoadGrammar(Mk(cult, "MOVE_DOWN", new string[] { "下移", "向下移动", "后退" }));
         eng.LoadGrammar(Mk(cult, "MOVE_LEFT", new string[] { "左移", "向左移动" }));
@@ -115,8 +117,17 @@ class VoiceControl
         eng.RecognizeAsync(RecognizeMode.Multiple);
         Console.WriteLine("[voice] 识别器 " + eng.RecognizerInfo.Culture.Name +
                           ", 正在监听麦克风 -> 127.0.0.1:" + port + "; 游戏退出后自动关闭");
-        // 心跳: 游戏每秒 PING 一次, 首次等待 15 秒(游戏启动加载素材), 之后 5 秒
-        UdpClient hb = new UdpClient(port + 1);
+        // 心跳: 游戏每秒 PING 一次, 首次等待 15 秒(游戏启动加载素材), 之后 5 秒。
+        // UdpClient(port) 构造即绑定端口——已有助手在跑(或端口被占)会抛异常,
+        // 不捕获的话第二个实例会带着未处理异常静默崩溃
+        UdpClient hb;
+        try { hb = new UdpClient(port + 1); }
+        catch (Exception)
+        {
+            Console.WriteLine("[voice] 心跳端口 " + (port + 1) +
+                              " 被占用(可能已有助手在运行), 退出");
+            return 2;
+        }
         hb.Client.ReceiveTimeout = 15000;
         while (true)
         {

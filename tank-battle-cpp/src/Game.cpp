@@ -2,6 +2,7 @@
 
 #include <SFML/Window.hpp>
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
@@ -11,9 +12,20 @@ Game::Game(Assets& assets, sf::RenderWindow& win) : a(assets), window(win) {
     if (a.sndMusicGameOver) gameOverMusic.emplace(*a.sndMusicGameOver);
     // 语音控制: 非阻塞收命令(助手由 main.cpp 拉起, 端口被占则功能禁用)
     voiceSock.setBlocking(false);
-    voiceReady = voiceSock.bind(VoicePort) == sf::Socket::Status::Done;
-    std::cout << (voiceReady ? "[voice] 语音控制已就绪(UDP " : "[voice] 端口 ")
-              << VoicePort << (voiceReady ? ")" : " 被占用, 语音控制禁用") << '\n';
+    voiceBound = voiceSock.bind(VoicePort) == sf::Socket::Status::Done;
+    std::cout << (voiceBound ? "[voice] 语音控制已就绪(UDP " : "[voice] 端口 ")
+              << VoicePort << (voiceBound ? ")" : " 被占用, 语音控制禁用") << '\n';
+    // 心跳线程: 每秒向助手发 PING(失联 5 秒助手自动退出)。独立于主循环,
+    // 主线程卡在拖动/缩放窗口的模态循环时心跳照发
+    if (voiceBound)
+        voicePingThread = std::jthread([this](std::stop_token st) {
+            while (!st.stop_requested()) {
+                (void)voicePingSock.send("PING", 4, sf::IpAddress(127, 0, 0, 1),
+                                         static_cast<unsigned short>(VoicePort + 1));
+                for (int i = 0; i < 10 && !st.stop_requested(); ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        });
 }
 
 // ---------------- 精灵与碰撞 ----------------
@@ -238,7 +250,7 @@ void Game::updatePlayer(float dt) {
 // ---------------- 语音控制(UDP 命令轮询) ----------------
 
 void Game::pollVoice(float dt) {
-    if (!voiceReady) return;
+    if (!voiceBound) return;
     // 非阻塞收命令(每帧最多 8 条, 命令格式见 tools/voice_control.cs)
     char buf[64];
     for (int i = 0; i < 8; ++i) {
@@ -255,13 +267,6 @@ void Game::pollVoice(float dt) {
             cmd.pop_back();
         if (!cmd.empty()) handleVoiceCommand(cmd);
     }
-    // 心跳: 告知助手游戏仍在运行(助手失联 5 秒自动退出)
-    voicePingTimer -= dt;
-    if (voicePingTimer <= 0.f) {
-        voicePingTimer = 1.f;
-        (void)voiceSock.send("PING", 4, sf::IpAddress(127, 0, 0, 1),
-                             static_cast<unsigned short>(VoicePort + 1));
-    }
     if (voiceMoveTimer > 0.f) {
         voiceMoveTimer -= dt;
         if (voiceMoveTimer <= 0.f) voiceMoveDir = -1.f;
@@ -269,30 +274,38 @@ void Game::pollVoice(float dt) {
 }
 
 void Game::handleVoiceCommand(const std::string& cmd) {
-    if (cmd == "FIRE") {
+    const voice::Command c = voice::parse(cmd); // 解析在 common.hpp, 有单测
+    switch (c.kind) {
+    case voice::Command::Kind::Fire:
         voiceFireWait = 1.f; // 等冷却的窗口期
-    } else if (cmd == "STOP") {
+        break;
+    case voice::Command::Kind::Stop:
         voiceMoveDir = -1.f;
         voiceMoveTimer = 0.f;
         voiceTurretRemain = 0.f;
-    } else if (cmd.rfind("TURRET_CW ", 0) == 0) {
-        voiceTurretRemain = std::clamp(voiceTurretRemain + static_cast<float>(std::atoi(cmd.c_str() + 10)),
-                                       -360.f, 360.f);
-    } else if (cmd.rfind("TURRET_CCW ", 0) == 0) {
-        voiceTurretRemain = std::clamp(voiceTurretRemain - static_cast<float>(std::atoi(cmd.c_str() + 11)),
-                                       -360.f, 360.f);
-    } else if (cmd == "MOVE_UP") {
+        break;
+    case voice::Command::Kind::TurretCW:
+    case voice::Command::Kind::TurretCCW:
+        voiceTurretRemain = voice::applyTurret(voiceTurretRemain, c);
+        break;
+    case voice::Command::Kind::MoveUp:
         voiceMoveDir = 0.f;
         voiceMoveTimer = VoiceMoveMaxTime;
-    } else if (cmd == "MOVE_DOWN") {
+        break;
+    case voice::Command::Kind::MoveDown:
         voiceMoveDir = 180.f;
         voiceMoveTimer = VoiceMoveMaxTime;
-    } else if (cmd == "MOVE_LEFT") {
+        break;
+    case voice::Command::Kind::MoveLeft:
         voiceMoveDir = -90.f;
         voiceMoveTimer = VoiceMoveMaxTime;
-    } else if (cmd == "MOVE_RIGHT") {
+        break;
+    case voice::Command::Kind::MoveRight:
         voiceMoveDir = 90.f;
         voiceMoveTimer = VoiceMoveMaxTime;
+        break;
+    case voice::Command::Kind::None:
+        break;
     }
 }
 

@@ -47,9 +47,13 @@ int main(int argc, char* argv[]) {
 
     Game game(assets, window);
 
-// 语音控制助手(仅 Windows): 最小化启动, 游戏退出(心跳失联 5 秒)后自动关闭
+// 语音控制助手(仅 Windows): 最小化启动, 游戏退出(心跳失联 5 秒)后自动关闭。
+// 未接管语音端口(通常是已开着另一个游戏实例)时不拉起——助手总是把口令发
+// 给 52017 的端口占有者, 第二个助手只会白白崩溃退出。
 #ifdef _WIN32
-    if (std::filesystem::exists("tools/voice_control.exe"))
+    if (!game.voiceReady())
+        std::cout << "[voice] 语音端口未接管(已有游戏实例在跑?), 不拉起助手\n";
+    else if (std::filesystem::exists("tools/voice_control.exe"))
         std::system("start \"tank-battle voice\" /MIN tools\\voice_control.exe");
     else
         std::cout << "[voice] 未找到 tools\\voice_control.exe, 语音控制不可用"

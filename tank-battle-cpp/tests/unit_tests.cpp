@@ -161,12 +161,52 @@ static void testBounceBehaviour() {
     }
 }
 
+// 语音命令协议(回归敏感点: 前缀匹配 + strtol 度数语义 + ±360 累加钳制)。
+// 行为基线来自旧版 handleVoiceCommand 内联实现(atoi 语义: "abc"->0, "45x"->45)
+static void testVoiceCommand() {
+    using K = voice::Command::Kind;
+    CHECK(voice::parse("FIRE").kind == K::Fire);
+    CHECK(voice::parse("STOP").kind == K::Stop);
+    CHECK(voice::parse("MOVE_UP").kind == K::MoveUp);
+    CHECK(voice::parse("MOVE_DOWN").kind == K::MoveDown);
+    CHECK(voice::parse("MOVE_LEFT").kind == K::MoveLeft);
+    CHECK(voice::parse("MOVE_RIGHT").kind == K::MoveRight);
+
+    CHECK(voice::parse("TURRET_CW 45").kind == K::TurretCW);    // 无换行符也认
+    CHECK(voice::parse("TURRET_CW 45").degrees == 45);
+    CHECK(voice::parse("TURRET_CCW 90").kind == K::TurretCCW);
+    CHECK(voice::parse("TURRET_CCW 90").degrees == 90);
+    CHECK(voice::parse("TURRET_CW  30").degrees == 30);         // 双空格: strtol 跳过空白
+    CHECK(voice::parse("TURRET_CW -700").degrees == -700);
+    CHECK(voice::parse("TURRET_CW abc").degrees == 0);          // 非数字 -> 0
+    CHECK(voice::parse("TURRET_CW 45x").degrees == 45);         // 数字前缀
+    CHECK(voice::parse("TURRET_CW 99999").degrees == 99999);    // 原始度数不在这层钳
+    CHECK(voice::parse("TURRET_CW").kind == K::None);           // 缺空格/度数
+    CHECK(voice::parse("TURRET_CW ").kind == K::None);          // 只有前缀(空串度数)
+    CHECK(voice::parse("turret_cw 45").kind == K::None);        // 大小写敏感
+    CHECK(voice::parse("").kind == K::None);
+    CHECK(voice::parse("FIREX").kind == K::None);
+    CHECK(voice::parse("\xE5\xBC\x80\xE7\x82\xAE").kind == K::None); // 中文原文不走本协议
+    // 超长输入(UDP 缓冲 64 字节上限): strtol 溢出被钳成确定值, 不再是 atoi 的 UB
+    CHECK(near(voice::applyTurret(0.f,
+        voice::parse("TURRET_CW " + std::string(50, '9'))), 360.f));
+
+    CHECK(near(voice::applyTurret(0.f, voice::parse("TURRET_CW 45")), 45.f));
+    CHECK(near(voice::applyTurret(0.f, voice::parse("TURRET_CCW 90")), -90.f));
+    CHECK(near(voice::applyTurret(0.f, voice::parse("TURRET_CW abc")), 0.f));
+    CHECK(near(voice::applyTurret(0.f, voice::parse("TURRET_CW 99999")), 360.f));
+    CHECK(near(voice::applyTurret(-350.f, voice::parse("TURRET_CCW 30")), -360.f));
+    CHECK(near(voice::applyTurret(300.f, voice::parse("TURRET_CW 300")), 360.f)); // 连发口令封顶一圈
+    CHECK(near(voice::applyTurret(300.f, voice::parse("TURRET_CCW 300")), 0.f));  // 反向冲销
+}
+
 int main() {
     testConversions();
     testDirectionSystem();
     testBoxHitTest();
     testRotatedAABB();
     testBounceBehaviour();
+    testVoiceCommand();
     if (failures == 0)
         std::printf("unit_tests: all passed\n");
     else

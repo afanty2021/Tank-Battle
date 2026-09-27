@@ -16,6 +16,7 @@
 #include <SFML/Network.hpp>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct Player {
@@ -65,6 +66,7 @@ public:
     void update(float dt);       // 固定步长 1/30s, 对应 Scratch 的 30fps 帧模型
     void render(sf::RenderWindow& target) const;
     bool wantQuit() const { return quit; } // Esc / 关闭窗口
+    bool voiceReady() const { return voiceBound; } // 未接管 UDP 端口时为 false
 
 private:
     // ---- 数值全部来自 Scratch 积木(每“步”都是每帧位移) ----
@@ -111,14 +113,17 @@ private:
     float fireCooldown = 0.f;
     bool turretManual = false;  // 方向键接管炮塔期间暂停鼠标跟随; 鼠标一动即恢复
     sf::Vector2i lastMousePos{};
-    // 语音控制状态(端口绑定失败则 voiceReady=false, 功能自动禁用)
-    sf::UdpSocket voiceSock;
-    bool voiceReady = false;
+    // 语音控制状态(端口绑定失败则 voiceBound=false, 功能自动禁用)
+    sf::UdpSocket voiceSock;      // 收命令(仅主线程使用)
+    sf::UdpSocket voicePingSock;  // 发心跳(仅后台线程使用; SFML socket 非线程安全)
+    // 心跳独立于主循环: 拖动/缩放窗口时 Windows 进入模态循环, 主线程的
+    // update() 不再执行, 若心跳挂在 update 里会被 5 秒超时误杀助手
+    std::jthread voicePingThread;
+    bool voiceBound = false;
     float voiceTurretRemain = 0.f; // 待旋转角度(带符号, 正=顺时针, 语音/方向键共用 manual 态)
     float voiceMoveDir = -1.f;     // 语音移动方向(Scratch 方向值; <0=无)
     float voiceMoveTimer = 0.f;    // 语音移动自动停止计时
     float voiceFireWait = 0.f;     // “开炮”等待冷却的窗口期
-    float voicePingTimer = 0.f;    // 给助手的心跳计时
     float spawnTimer = 0.f;      // 敌方生成计时(1~5 秒随机)
     std::mt19937 rng{std::random_device{}()};
     std::vector<sf::Sound> voices;      // 复用的播放通道

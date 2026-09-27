@@ -4,6 +4,7 @@
 #include <SFML/System.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 
 // UTF-8 字面量 -> sf::String(用于中文渲染)
@@ -118,3 +119,53 @@ inline float bounceOffEdges(float dir, sf::Vector2f& pos,
 }
 
 } // namespace stage
+
+// ---------------- 语音命令协议(移植版新增) ----------------
+// 助手(tools/voice_control.cs)发来的 UDP 文本行 -> 结构化命令。
+// 纯解析不触游戏状态, 可独立单测; 消费方是 Game::handleVoiceCommand。
+
+namespace voice {
+
+struct Command {
+    enum class Kind {
+        None, Fire, Stop, TurretCW, TurretCCW,
+        MoveUp, MoveDown, MoveLeft, MoveRight
+    };
+    Kind kind = Kind::None;
+    int degrees = 0;   // TurretCW/TurretCCW 的原始度数(累加钳制见 applyTurret)
+};
+
+// strtol 而非 atoi: 溢出时结果确定(atoi 是未定义行为);
+// 空白跳过/正负号/数字前缀等语义与 atoi 一致("abc"->0, "45x"->45)
+inline int parseDegrees(const char* s) {
+    const long v = std::strtol(s, nullptr, 10);
+    return static_cast<int>(std::clamp(v, -1000000L, 1000000L));
+}
+
+inline Command parse(const std::string& cmd) {
+    Command c;
+    if (cmd == "FIRE") c.kind = Command::Kind::Fire;
+    else if (cmd == "STOP") c.kind = Command::Kind::Stop;
+    else if (cmd == "MOVE_UP") c.kind = Command::Kind::MoveUp;
+    else if (cmd == "MOVE_DOWN") c.kind = Command::Kind::MoveDown;
+    else if (cmd == "MOVE_LEFT") c.kind = Command::Kind::MoveLeft;
+    else if (cmd == "MOVE_RIGHT") c.kind = Command::Kind::MoveRight;
+    else if (cmd.rfind("TURRET_CW ", 0) == 0 && cmd.size() > 10) {
+        c.kind = Command::Kind::TurretCW;
+        c.degrees = parseDegrees(cmd.c_str() + 10);
+    } else if (cmd.rfind("TURRET_CCW ", 0) == 0 && cmd.size() > 11) {
+        c.kind = Command::Kind::TurretCCW;
+        c.degrees = parseDegrees(cmd.c_str() + 11);
+    }
+    return c;
+}
+
+// 待旋转角: CW 加 / CCW 减, 累加后钳到 ±360(口令可连发, 总量不超过一整圈)
+inline float applyTurret(float remain, const Command& c) {
+    const float delta = c.kind == Command::Kind::TurretCW
+                            ? static_cast<float>(c.degrees)
+                            : -static_cast<float>(c.degrees);
+    return std::clamp(remain + delta, -360.f, 360.f);
+}
+
+} // namespace voice
