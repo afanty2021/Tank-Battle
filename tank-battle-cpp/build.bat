@@ -40,7 +40,7 @@ if errorlevel 1 (
     echo [warn] voice_control build failed - game runs without voice control
 )
 g++ -B%U%\bin\ -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion ^
-    src/main.cpp src/Assets.cpp src/Game.cpp src/Battle.cpp app_icon.res.o ^
+    src/main.cpp src/Assets.cpp src/Game.cpp src/Battle.cpp src/NetSession.cpp app_icon.res.o ^
     -o tank-battle.exe ^
     -lsfml-graphics -lsfml-audio -lsfml-window -lsfml-system -lsfml-network
 if errorlevel 1 (
