@@ -72,7 +72,7 @@ private:
     sf::UdpSocket sock_;      // 主收发(非阻塞; 客户端首次 send 自动绑随机端口)
     sf::UdpSocket keepSock_;  // 心跳专用(仅后台线程 send; SFML socket 非线程安全)
     std::jthread keepThread_; // 1Hz KEEP -> 对端主端口(语音 voicePingThread 同款)
-    sf::IpAddress peerIp_;    // 对端 IP(心跳线程只读; 会话期恒定)
+    sf::IpAddress peerIp_ = sf::IpAddress::Any; // SFML3 无默认构造, 必须显式初始化
     unsigned short peerPort_ = 0; // 对端主端口(同上)
     std::string myName_, peerName_;
     bool myReady_ = false;    // 本机 ready 位, 随 JOIN 夹带上报(setReady 写)
