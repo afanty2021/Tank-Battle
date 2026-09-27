@@ -16,7 +16,9 @@ from fontTools.ttLib import TTFont
 
 SRC = "NotoSansSC-Regular.otf"
 OUT = "assets/fonts/NotoSansSC-Game.otf"
-TEXT = "上下左右为键鼠标左键发射炮弹！，。：、分数"
+# 教学版课例里 draw_text 会渲染的中文也要加进来(lessons/L06~L08)
+TEXT = ("上下左右为键鼠标左键发射炮弹！，。：、分数"
+       "按空格再来一局开始生命时间胜利用坦克大战教学版")
 
 # sanity: source font must open and contain our chars
 src = TTFont(SRC)

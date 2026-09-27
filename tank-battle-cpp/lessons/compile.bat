@@ -13,7 +13,7 @@ cd /d %~dp0..
 
 if "%1"=="" (
     echo usage: compile.bat L01
-    echo lessons done so far: L01 L02
+    echo lessons: L01 L02 L03 L04 L05 L06 L07 L08
     exit /b 1
 )
 
@@ -41,7 +41,7 @@ if exist "%U%\bin\g++.exe" (
 
 echo compiling %SRC% ...
 "%GXX%" %EXTRA% -std=c++20 -O1 -Wall %SRC% -o %1.exe ^
-    -lsfml-graphics -lsfml-window -lsfml-system
+    -lsfml-graphics -lsfml-audio -lsfml-window -lsfml-system
 if errorlevel 1 (
     echo [error] build failed - check for Chinese punctuation / missing ;
     exit /b 1
