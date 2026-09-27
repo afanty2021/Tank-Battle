@@ -2,6 +2,12 @@
 // 舞台 480x360, 逻辑分辨率恒为 960x720(2 倍渲染); 窗口可任意缩放,
 // 内容按 4:3 等比缩放居中(letterbox, 同 Scratch 播放器的等比缩放);
 // 逻辑固定 30 步/秒, 对应 Scratch 帧率
+#ifdef _WIN32
+// 语音助手启动需要 CreateProcess; 须在 SFML 之前包含并禁用 min/max 宏
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "Assets.hpp"
 #include "Game.hpp"
 
@@ -47,14 +53,31 @@ int main(int argc, char* argv[]) {
 
     Game game(assets, window);
 
-// 语音控制助手(仅 Windows): 最小化启动, 游戏退出(心跳失联 5 秒)后自动关闭。
-// 未接管语音端口(通常是已开着另一个游戏实例)时不拉起——助手总是把口令发
-// 给 52017 的端口占有者, 第二个助手只会白白崩溃退出。
+// 语音控制助手(仅 Windows): 独立最小化控制台启动, 游戏退出(心跳失联 5 秒)
+// 后自动关闭; 未接管语音端口(通常是已开着另一个游戏实例)时不拉起。
+// 必须用 CreateProcess(bInheritHandles=FALSE) 而不是 system("start ..."):
+// system 链条会继承游戏的可继承句柄(Windows socket 默认可继承), 助手会
+// 拖着游戏的 52017 不放——游戏退出后 5 秒内快速重启, 新实例就绑不上端口,
+// 语音静默失效
 #ifdef _WIN32
     if (!game.voiceReady())
         std::cout << "[voice] 语音端口未接管(已有游戏实例在跑?), 不拉起助手\n";
-    else if (std::filesystem::exists("tools/voice_control.exe"))
-        std::system("start \"tank-battle voice\" /MIN tools\\voice_control.exe");
+    else if (std::filesystem::exists("tools/voice_control.exe")) {
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW; // 等价于 start /MIN
+        si.wShowWindow = SW_MINIMIZE;
+        PROCESS_INFORMATION pi{};
+        wchar_t cmdLine[] = L"tools\\voice_control.exe";
+        if (CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
+                           CREATE_NEW_CONSOLE, nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        } else {
+            std::cout << "[voice] 助手拉起失败(错误 " << GetLastError()
+                      << "), 语音控制不可用\n";
+        }
+    }
     else
         std::cout << "[voice] 未找到 tools\\voice_control.exe, 语音控制不可用"
                      "(build.bat 会自动编译)\n";

@@ -111,24 +111,36 @@ class VoiceControl
             return 2;
         }
         LoadGrammars(eng);
+        // 心跳: 游戏每秒 PING 一次, 首次等待 15 秒(游戏启动加载素材), 之后 5 秒。
+        // UdpClient(port) 构造即绑定端口。快速重启竞态: 上一局退出后旧助手要
+        // ~5 秒才超时退出并释放 52018, 这期间启动的新助手会绑定失败——若立即
+        // 放弃, 新会话语音就静默失效, 故重试等待。绑定放在开麦之前: 若旧助手
+        // 被新游戏的心跳喂着一直活着(由它继续服务), 新助手等不到端口就直接
+        // 退出, 避免两个助手同时开麦识别出双份命令
+        UdpClient hb = null;
+        for (int i = 0; hb == null; i++)
+        {
+            try { hb = new UdpClient(port + 1); }
+            catch (Exception)
+            {
+                if (i == 0)
+                    Console.WriteLine("[voice] 心跳端口 " + (port + 1) +
+                                      " 被占用, 等待旧助手退出(最多 8 秒)...");
+                if (i >= 16) // 17 次尝试 x 0.5 秒 ~= 8 秒
+                {
+                    Console.WriteLine("[voice] 心跳端口仍被占用(已有助手在服务?), 退出");
+                    return 2;
+                }
+                System.Threading.Thread.Sleep(500);
+            }
+        }
+        hb.Client.ReceiveTimeout = 15000;
         udp = new UdpClient();
         eng.SetInputToDefaultAudioDevice();
         eng.SpeechRecognized += OnSpeech;
         eng.RecognizeAsync(RecognizeMode.Multiple);
         Console.WriteLine("[voice] 识别器 " + eng.RecognizerInfo.Culture.Name +
                           ", 正在监听麦克风 -> 127.0.0.1:" + port + "; 游戏退出后自动关闭");
-        // 心跳: 游戏每秒 PING 一次, 首次等待 15 秒(游戏启动加载素材), 之后 5 秒。
-        // UdpClient(port) 构造即绑定端口——已有助手在跑(或端口被占)会抛异常,
-        // 不捕获的话第二个实例会带着未处理异常静默崩溃
-        UdpClient hb;
-        try { hb = new UdpClient(port + 1); }
-        catch (Exception)
-        {
-            Console.WriteLine("[voice] 心跳端口 " + (port + 1) +
-                              " 被占用(可能已有助手在运行), 退出");
-            return 2;
-        }
-        hb.Client.ReceiveTimeout = 15000;
         while (true)
         {
             try

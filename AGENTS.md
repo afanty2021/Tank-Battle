@@ -2,13 +2,13 @@
 
 ## 这个工作区是什么
 
-Scratch 3《坦克大战》（.sb3，位于 `坦克大战素材和源码\`）的忠实 C++20/SFML 3 移植，移植项目在 `tank-battle-cpp\`。非 git 仓库。
+Scratch 3《坦克大战》（.sb3，位于 `坦克大战素材和源码\`）的忠实 C++20/SFML 3 移植，移植项目在 `tank-battle-cpp\`。git 仓库（github.com/afanty2021/Tank-Battle，SSH 推送）。
 
 **移植首要原则**：玩法数值与行为必须与 .sb3 积木一致；任何有意偏离都要记录在 `tank-battle-cpp\README.md` 的"与原版的已知差异"一节，行为级语义改动需配单元测试回归（本项目已经过三轮代码评审，反弹/碰撞/冻结等语义都有回归测试锁住）。
 
 ## 构建与测试
 
-- 唯一本机验证过的路线：`cd tank-battle-cpp && build.bat`，四步全绿才算通过（编译 `-Wall -Wextra -Wshadow -Wconversion` 需 0 警告 → 单测 → 素材清单校验 → DLL 闭包部署，闭包应恰好 24 个 DLL）。
+- 唯一本机验证过的路线：`cd tank-battle-cpp && build.bat`，四步全绿才算通过（编译 `-Wall -Wextra -Wshadow -Wconversion` 需 0 警告 → 单测 → 素材清单校验 → DLL 闭包部署，闭包应恰好 25 个 DLL，含语音控制的 sfml-network）。
 - 工具链：MSYS2 UCRT64 g++（`D:\Scoop\apps\msys2\current\ucrt64`）。本机无 cmake（CMakeLists.txt 未验证）；Dev-C++ 自带 TDM-GCC 4.9.2 编不了 SFML 3，勿用。
 - 运行 `tank-battle.exe` 必须在 `tank-battle-cpp\` 目录下（按当前工作目录找 `assets\`）。
 - 改 `src/Assets.cpp` 里的造型常量后，`tools/check_manifest.py` 会与 `assets/manifest.json` 核对；重新导出素材用 `tools/extract_assets.py`（需 Python3 + Pillow + ffmpeg）。
