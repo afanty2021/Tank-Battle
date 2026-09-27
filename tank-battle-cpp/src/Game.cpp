@@ -97,6 +97,25 @@ void Game::handleEvent(const sf::Event& event) {
             if (key->code == sf::Keyboard::Key::H) netStartHost();
             else if (key->code == sf::Keyboard::Key::J) netStartScan();
         }
+        // 联机客户端扫描页(Task 6 Step 2.5, spec §4): J=重新扫描;
+        // 扫描窗结束且发现多个主机时数字键 1-9 选定加入(单人不用数字键,
+        // J 在联机客户端态也无其它绑定; 已连接/连接中不响应)
+        if (mode_ == Mode::NetClient && net_ && !view_.has && !joiningStarted_) {
+            if (key->code == sf::Keyboard::Key::J) {
+                netScanDone_ = false;
+                net_->startScan(machineName());
+            } else if (netScanDone_ && net_->foundHosts().size() > 1) {
+                // SFML3 的 Key::Num1..Num9 为顶排数字键且连续
+                const int k = static_cast<int>(key->code) -
+                              static_cast<int>(sf::Keyboard::Key::Num1);
+                const int n = static_cast<int>(net_->foundHosts().size());
+                if (k >= 0 && k <= 8 && k < n) {
+                    netStartJoin(net_->foundHosts()[static_cast<std::size_t>(k)].addr);
+                    joiningStarted_ = true;
+                    netJoinWait_ = 0.f;
+                }
+            }
+        }
     }
 }
 
@@ -305,6 +324,7 @@ void Game::netStartScan() {
     net_ = std::make_unique<NetSession>();
     net_->startScan(machineName());
     mode_ = Mode::NetClient;
+    netScanDone_ = false; // 新扫描窗开始(Step 2.5 的列表/自动连以前提为闸)
 }
 
 void Game::netStartJoin(sf::IpAddress host) {
@@ -331,6 +351,7 @@ void Game::netLeave() {
     net_.reset(); mode_ = Mode::Solo; phase = Phase::Title;
     netLocalReady_ = false; view_ = NetView{};
     joiningStarted_ = false; netJoinWait_ = 0.f; // (D) Esc 后再 J 不吃 5s 旧等待
+    netScanDone_ = false;
 }
 
 InputState Game::buildLocalInput() {
@@ -363,7 +384,12 @@ void Game::netHandleEvents() {
             std::cout << "[net] 对局进行中, 重新扫描\n";
             joiningStarted_ = false; netJoinWait_ = 0.f;
             view_ = NetView{};
+            netScanDone_ = false;
             net_->startScan(machineName());
+        } else if (ev.kind == NetEvent::Kind::ScanDone) {
+            // 2s 扫描窗结束(Step 2.5): 此后才做 0/1/多 决策——不等窗结束
+            // 就连第一个, 局域网里有第二台主机时用户根本看不到选择列表
+            netScanDone_ = true;
         } else if (ev.kind == NetEvent::Kind::VersionMismatch) {
             std::cout << "[net] 版本不一致, 请两台机器使用同一份构建\n";
             netLeave();
@@ -428,9 +454,11 @@ void Game::netUpdateClient(float dt) {
     net_->poll(dt);
     netHandleEvents();
     if (!net_) return; // (A) 事件里可能已 netLeave()
-    // 扫描期: 2s 后有结果(0 个->提示重试; >=1 个->startJoin 第一个)
-    // (多个主机列表选择 UI 在 Task 6 Step 2.5; 先自动连第一个)
-    if (!view_.has && !net_->foundHosts().empty() && !joiningStarted_) {
+    // 扫描期(Task 6 Step 2.5): 2s 扫描窗结束(ScanDone)后决策——恰 1 个自动连;
+    // 0 个由 renderNet 提示重试; >1 个停在主机列表由数字键选择(renderNet 画,
+    // handleEvent 收)。Task 5 的"见一个连第一个"被此取代(多主机时误连第一个)
+    if (netScanDone_ && !view_.has && !joiningStarted_ &&
+        net_->foundHosts().size() == 1) {
         netStartJoin(net_->foundHosts().front().addr);
         joiningStarted_ = true;
         netJoinWait_ = 0.f;
@@ -442,6 +470,7 @@ void Game::netUpdateClient(float dt) {
         if (netJoinWait_ > 5.f) {
             netJoinWait_ = 0.f;
             joiningStarted_ = false;
+            netScanDone_ = false;
             net_->startScan(machineName());
         }
     }
@@ -664,11 +693,24 @@ void Game::updateProjectiles(float dt) {
 
 void Game::render(sf::RenderWindow& target) const {
     target.clear();
+    // 联机画面整体改走 renderNet(自绘背景; 插在通用背景绘制之前, 否则画两次)。
+    // 不放进下面的 if/else——联机会话期间 Game::phase 恒为 Title(复用标题渲染
+    // 底的既有约定), 走单人分支会错画标题画面
+    if (mode_ != Mode::Solo) { renderNet(target); return; }
     target.draw(sf::Sprite(a.background));
 
     if (phase == Phase::Title || phase == Phase::TitleMusic) {
         // 开始画面(点击后音乐播完才进入游戏)
         target.draw(sf::Sprite(a.screenStart));
+        // 联机入口提示(Task 6; README 已知差异: 标题画面新增一行文字)
+        if (a.font) {
+            sf::Text hint = makeText(utf8("H 创建联机对战    J 加入对战"),
+                                     20, sf::Color(0x44, 0x3c, 0x1b));
+            sf::FloatRect hb = hint.getLocalBounds();
+            hint.setOrigin({hb.size.x / 2.f, hb.size.y / 2.f});
+            hint.setPosition(stage::toWindow({0.f, -140.f}));
+            target.draw(hint);
+        }
     } else {
         // 子弹(敌方炮弹)
         for (const Bullet& b : bullets)
@@ -721,5 +763,182 @@ void Game::render(sf::RenderWindow& target) const {
             scoreText.setPosition({8.f, 6.f});
             target.draw(scoreText);
         }
+    }
+}
+
+// ---------------- 联机渲染(Task 6; render() 以 mode_ != Solo 早退进来) ----------------
+
+// 居中文字小工具: 舞台坐标定位, 原点=文字中心(同单人帮助文字的画法)
+void Game::drawCenteredText(sf::RenderWindow& target, const sf::String& str,
+                            unsigned size, sf::Color color,
+                            sf::Vector2f stagePos) const {
+    sf::Text t = makeText(str, size, color);
+    sf::FloatRect b = t.getLocalBounds();
+    t.setOrigin({b.size.x / 2.f, b.size.y / 2.f});
+    t.setPosition(stage::toWindow(stagePos));
+    target.draw(t);
+}
+
+// 血条 HUD(Step 3): 左上角原"分数"监视器位置附近, 两行 玩家1(房主)/玩家2
+// + 各 3 格 12x12 方块(满=深色/空=浅色); 不引入分数字样。
+// 血量: 主机读模拟 battle_.hp, 客户端读快照 view_.snap.hp
+void Game::drawNetHud(sf::RenderWindow& target) const {
+    const bool host = mode_ == Mode::NetHost;
+    const int hp[2] = {host ? battle_.hp[0]
+                            : static_cast<int>(view_.snap.hp[0]),
+                       host ? battle_.hp[1]
+                            : static_cast<int>(view_.snap.hp[1])};
+    for (int i = 0; i < 2; ++i) {
+        if (a.font) {
+            sf::Text label = makeText(utf8(i == 0 ? "玩家1(房主)" : "玩家2"),
+                                      18, sf::Color(0x22, 0x22, 0x22));
+            label.setPosition({10.f, 8.f + 22.f * static_cast<float>(i)});
+            target.draw(label);
+        }
+        for (int j = 0; j < 3; ++j) {
+            sf::RectangleShape cell({12.f, 12.f});
+            cell.setPosition({190.f + 15.f * static_cast<float>(j),
+                              10.f + 22.f * static_cast<float>(i)});
+            cell.setFillColor(j < hp[i] ? sf::Color(0x44, 0x3c, 0x1b)
+                                        : sf::Color(0xd0, 0xc8, 0xa8));
+            target.draw(cell);
+        }
+    }
+}
+
+// 联机画面: 主机画 battle_, 客户端画 view_.snap; 己方炮塔本地覆盖(跟手)。
+// clear() 已由 render() 调用点完成, 这里只补背景; 下方 if/else 与单人无关
+void Game::renderNet(sf::RenderWindow& target) const {
+    target.draw(sf::Sprite(a.background));
+    const bool host = mode_ == Mode::NetHost;
+    const sf::Color ink(0x44, 0x3c, 0x1b); // 同单人帮助文字的墨色
+    const bool inBattle = host ? battle_.phase != BattlePhase::Countdown
+                               : view_.has && view_.snap.phase != proto::Phase::Countdown;
+    if (!inBattle) { // 大厅/等待页(房间名等待 / 扫描提示 / 倒计时大字)
+        if (a.font) {
+            int digit = 0; // >0: 倒计时大字
+            if (host) {
+                // spec §4: 等待页显示房间名(=COMPUTERNAME); 连上后显示"已连接"
+                drawCenteredText(target, utf8("房间：" + machineName()),
+                                 24, ink, {0.f, 100.f});
+                if (net_ && net_->clientJoined()) {
+                    // 对端显示名未从 NetSession 暴露(本任务不动 socket 层),
+                    // 以对端 IP 代示; ASCII 部分当前字体子集即可渲染
+                    drawCenteredText(target,
+                                     utf8("已连接 " + net_->peerAddress().toString()),
+                                     24, ink, {0.f, 60.f});
+                    digit = std::max(1, static_cast<int>(std::ceil(battle_.countdown)));
+                } else {
+                    drawCenteredText(target, utf8("等待对手加入..."),
+                                     24, ink, {0.f, 60.f});
+                }
+            } else if (view_.has) { // 已收到首个快照: 倒计时(客户端本地计时)
+                drawCenteredText(target, utf8("已连接"), 24, ink, {0.f, 60.f});
+                digit = std::max(1, static_cast<int>(std::ceil(view_.countdownLocal)));
+            } else if (joiningStarted_) { // JOIN 已发, 等首个 SNAP
+                drawCenteredText(target, utf8("连接中..."), 24, ink, {0.f, 60.f});
+            } else if (net_) { // 扫描页: 扫描中 / 主机列表(Step 2.5) / 未发现
+                const std::vector<FoundHost>& hosts = net_->foundHosts();
+                if (netScanDone_ && hosts.size() > 1) {
+                    const int n = std::min(static_cast<int>(hosts.size()), 9);
+                    drawCenteredText(target, utf8("按 1-9 加入"), 22, ink, {0.f, 110.f});
+                    for (int k = 0; k < n; ++k)
+                        drawCenteredText(
+                            target,
+                            utf8(std::to_string(k + 1) + ". " + hosts[static_cast<std::size_t>(k)].name),
+                            22, ink, {0.f, 70.f - 28.f * static_cast<float>(k)});
+                } else if (netScanDone_) { // 0 个(恰 1 个已在 update 里自动连)
+                    drawCenteredText(target,
+                                     utf8("未发现对局，按 J 重试或用 --join IP"),
+                                     24, ink, {0.f, 60.f});
+                } else {
+                    drawCenteredText(target,
+                                     utf8("扫描中... 按 J 重试或用 --join IP"),
+                                     24, ink, {0.f, 60.f});
+                }
+            }
+            if (digit > 0) // 3-2-1 大字
+                drawCenteredText(target, utf8(std::to_string(digit)), 120, ink, {0.f, -20.f});
+        }
+    } else {
+        // 双坦克: 客户端坦克(索引1)整体蓝色 tint 区分
+        const auto tankOf = [&](int i) -> proto::TankSnap {
+            if (host) {
+                const BattleTank& t = battle_.tanks[i];
+                return {t.pos.x, t.pos.y, t.dir, t.turret,
+                        static_cast<std::uint8_t>(t.state),
+                        static_cast<std::uint8_t>(t.animFrame)};
+            }
+            return view_.snap.tanks[i];
+        };
+        for (int i = 0; i < 2; ++i) {
+            const proto::TankSnap t = tankOf(i);
+            const bool blink = t.state == 2 &&            // 无敌闪烁(0.1s 翻转)
+                (static_cast<int>(netBlinkTimer_ * 10.f) % 2 == 0);
+            if (t.state == 1) {                           // 爆炸帧(数组下标已由
+                target.draw(makeSprite(a.playerExplosion[t.animFrame], // 协议校验<=5)
+                                       0.60f, {t.x, t.y}, t.dir));
+            } else if (!blink) {
+                sf::Sprite body = makeSprite(a.playerBody, 0.30f, {t.x, t.y}, t.dir);
+                if (i == 1) body.setColor(sf::Color(150, 180, 255));
+                target.draw(body);
+            }
+        }
+        // 导弹(客户端导弹同 tint)
+        auto drawMissiles = [&](const std::vector<proto::MissileSnap>& ms) {
+            for (const proto::MissileSnap& m : ms) {
+                sf::Sprite sp = makeSprite(a.missile, 0.50f, {m.x, m.y}, m.dir);
+                if (m.owner == 1) sp.setColor(sf::Color(150, 180, 255));
+                target.draw(sp);
+            }
+        };
+        if (host) drawMissiles(makeSnap(battle_, false).missiles);
+        else drawMissiles(view_.snap.missiles);
+        // 炮塔最上层: 己方用本地 player.turretDir(跟手), 对方用快照值
+        for (int i = 0; i < 2; ++i) {
+            const proto::TankSnap t = tankOf(i);
+            const bool own = host ? i == 0 : i == 1;
+            const float dir = own ? player.turretDir : t.turret;
+            const bool exploding = t.state == 1;
+            if (!exploding) {
+                sf::Sprite tur = makeSprite(a.playerTurret, 0.30f, {t.x, t.y}, dir);
+                if (i == 1) tur.setColor(sf::Color(150, 180, 255));
+                target.draw(tur);
+            }
+        }
+        drawNetHud(target); // 血条
+        // 结算画面 + 胜者文字 + 双 R 提示
+        const bool over = host ? battle_.phase == BattlePhase::Over
+                               : view_.snap.phase == proto::Phase::Over;
+        if (over) {
+            target.draw(sf::Sprite(a.screenGameOver));
+            if (a.font) {
+                // 胜者: 主机读模拟值 battle_.winner; 客户端由快照 hp 推导
+                // (双方血均归零=平局, 与 Battle.cpp 的 winner 判定一致)
+                int winner = host ? battle_.winner : -1;
+                if (!host) {
+                    if (view_.snap.hp[0] == 0 && view_.snap.hp[1] == 0) winner = 2;
+                    else if (view_.snap.hp[0] == 0) winner = 1;
+                    else if (view_.snap.hp[1] == 0) winner = 0;
+                }
+                if (winner >= 0)
+                    drawCenteredText(
+                        target,
+                        utf8(winner == 2 ? "平局"
+                             : (winner == 0 ? "玩家 1 胜利" : "玩家 2 胜利")),
+                        40, ink, {0.f, 40.f});
+                drawCenteredText(target, utf8("按 R 重开(双方)"), 22, ink, {0.f, -40.f});
+            }
+        }
+        // 暂停标签: 主机=对端 INP 停滞>1s 且 KEEP 仍活(同暂停判定);
+        // 客户端=主机显式 phase==3, 或 phase==1 且快照停更>1s 而 KEEP 仍活
+        // (真掉线的 1-5s 间隙不误显"暂停中")
+        const bool peerPaused = net_ && (
+            host ? (battle_.phase == BattlePhase::Battle && net_->remoteInputStale())
+                 : (view_.snap.phase == proto::Phase::Paused ||
+                    (view_.snap.phase == proto::Phase::Battle &&
+                     view_.noSnapSince > 1.f && net_->peerRecent())));
+        if (peerPaused && a.font)
+            drawCenteredText(target, utf8("对方暂停中"), 26, ink, {0.f, 130.f});
     }
 }

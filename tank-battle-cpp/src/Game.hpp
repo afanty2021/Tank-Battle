@@ -156,6 +156,13 @@ private:
     void netUpdateHost(float dt);
     void netUpdateClient(float dt);
     void netHandleEvents();
+    // 联机画面(Task 6): render() 以 mode_ != Solo 早退进来; 自绘背景,
+    // 大厅/倒计时/战斗(双坦克+HUD)/结算/暂停标签全在此, 不碰单人 if/else
+    void renderNet(sf::RenderWindow& target) const;
+    void drawNetHud(sf::RenderWindow& target) const; // 血条(Step 3)
+    void drawCenteredText(sf::RenderWindow& target, const sf::String& str,
+                          unsigned size, sf::Color color,
+                          sf::Vector2f stagePos) const; // 居中文字小工具
     Mode mode_ = Mode::Solo;
     std::unique_ptr<NetSession> net_;
     BattleDefs netDefs_;
@@ -164,6 +171,8 @@ private:
     bool netLocalReady_ = false;        // 本机 R(结算期)
     bool netWasOver_ = false;           // 客户端: 用于 Over->新局跳变时清 ready
     bool joiningStarted_ = false;       // 客户端: 扫描选定主机后置位
+    bool netScanDone_ = false;          // 客户端: 2s 扫描窗已结束(Step 2.5:
+                                        // 0 个提示重试/恰 1 个自动连/>1 个列列表)
     float netJoinWait_ = 0.f;           // 客户端: JOIN 后等首个 SNAP 的计时(5s)
     float netBlinkTimer_ = 0.f;         // 无敌闪烁时钟(0.1s 翻转)
     static std::string machineName();   // COMPUTERNAME 兜底 "host"/"client"
