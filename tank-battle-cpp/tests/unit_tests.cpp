@@ -200,6 +200,121 @@ static void testVoiceCommand() {
     CHECK(near(voice::applyTurret(300.f, voice::parse("TURRET_CCW 300")), 0.f));  // 反向冲销
 }
 
+// ---------------- 联机协议(Protocol.hpp) ----------------
+#include "../src/Protocol.hpp"
+
+static void testProtoQuantize() {
+    // 角度: 折叠到 [0,360) 后 ×16, 往返误差 <= 1/16 度
+    for (float a : {-90.f, 0.f, 359.99f, 360.f, 720.f, -0.01f}) {
+        const float back = proto::decAngle(proto::encAngle(a));
+        CHECK(back >= 0.f && back < 360.f);
+        float folded = std::fmod(std::fmod(a, 360.f) + 360.f, 360.f);
+        if (folded >= 360.f - 1.f / 16.f) folded = 0.f; // encAngle 四舍五入可到 360*16->取模归 0
+        CHECK(std::abs(back - folded) <= 1.f / 16.f + 1e-4f);
+    }
+    CHECK(proto::encAngle(-90.f) == proto::encAngle(270.f)); // 负角折叠
+    CHECK(proto::encAngle(359.99f) < 5760);                  // 不越 360*16
+    // 坐标: 往返误差 <= 1/16 舞台单位
+    for (float v : {-240.f, -211.f, 0.f, 137.5f, 240.f})
+        CHECK(std::abs(proto::decPos(proto::encPos(v)) - v) <= 1.f / 16.f + 1e-4f);
+}
+
+static void testProtoRoundTrip() {
+    const proto::HostMsg h{"room-01"};
+    auto eh = proto::encodeHost(h.name);
+    auto dh = proto::decodeHost(eh.data(), eh.size());
+    CHECK(dh && dh->name == "room-01");
+
+    const proto::ErrMsg e{proto::kErrBusy, 7};
+    auto ee = proto::encodeErr(e.reason, e.peerVersion);
+    auto de = proto::decodeErr(ee.data(), ee.size());
+    CHECK(de && de->reason == proto::kErrBusy && de->peerVersion == 7);
+
+    const proto::JoinMsg j{"player-2", true};
+    auto ej = proto::encodeJoin(j.name, j.ready);
+    auto dj = proto::decodeJoin(ej.data(), ej.size());
+    CHECK(dj && dj->name == "player-2" && dj->ready);
+
+    const InputState in{0x0B, 123.4f, true};
+    auto ei = proto::encodeInp(in);
+    auto di = proto::decodeInp(ei.data(), ei.size());
+    CHECK(di && di->input.moveBits == 0x0B && di->input.fire &&
+          near(di->input.aim, 123.4f, 1.f / 16.f + 1e-3f));
+
+    proto::SnapMsg s{};
+    s.tick = 4000000000u; s.phase = proto::Phase::Battle;
+    s.hp[0] = 2; s.hp[1] = 3;
+    s.tanks[1] = {10.5f, -20.25f, 90.f, 45.f, 1, 3};
+    s.missiles.push_back({5.f, 5.f, 0.f, 0});
+    s.missiles.push_back({-5.f, -5.f, 180.f, 1});
+    s.events.fire[1] = s.events.hit[0] = s.events.die[0] = true;
+    auto es = proto::encodeSnap(s);
+    auto ds = proto::decodeSnap(es.data(), es.size());
+    CHECK(ds && ds->tick == 4000000000u && ds->phase == proto::Phase::Battle);
+    CHECK(ds && ds->tanks[1].animFrame == 3 && ds->tanks[1].state == 1);
+    CHECK(ds && ds->missiles.size() == 2 && ds->missiles[1].owner == 1);
+    CHECK(ds && ds->events.die[0] && !ds->events.fire[0]);
+}
+
+static void testProtoBadPackets() {
+    // 截断: 每种消息砍掉最后一个字节都必须失败
+    auto eh = proto::encodeHost("ab");
+    CHECK(!proto::decodeHost(eh.data(), eh.size() - 1));
+    auto ej = proto::encodeJoin("ab", false);
+    CHECK(!proto::decodeJoin(ej.data(), ej.size() - 1));
+    auto ei = proto::encodeInp(InputState{});
+    CHECK(!proto::decodeInp(ei.data(), ei.size() - 1));
+    proto::SnapMsg s{}; s.phase = proto::Phase::Countdown; s.hp[0] = s.hp[1] = 3;
+    auto es = proto::encodeSnap(s);
+    CHECK(!proto::decodeSnap(es.data(), es.size() - 1));
+    // 首字节 msgId 不匹配
+    CHECK(!proto::decodeHost(es.data(), es.size()));
+    // 名字超长(31B 上限): encode 返回空包, decode 也必须拒绝
+    const std::string longName(40, 'x');
+    auto elong = proto::encodeJoin(longName, false);
+    CHECK(elong.empty() &&
+          !proto::decodeJoin(elong.data(), elong.size()));
+    // SNAP 非法枚举/越界值 -> 整包 nullopt(不崩溃)
+    // 字节偏移: [0]id [1]ver [2..5]tick [6]phase [7]hp0 [8]hp1
+    //           [9..18]tank0(x2y2dir2turret2state1frame1) [19..28]tank1 ...
+    auto mutate = [&](int patchIdx, std::uint8_t v) {
+        auto b = proto::encodeSnap(s);
+        b[patchIdx] = v;
+        return proto::decodeSnap(b.data(), b.size()).has_value();
+    };
+    CHECK(!mutate(6, 4));   // phase=4
+    CHECK(!mutate(7, 4));   // hp0=4
+    CHECK(!mutate(17, 3));  // tank0.state=3
+    CHECK(!mutate(27, 3));  // tank1.state=3
+    CHECK(mutate(18, 6));   // state==0 时 animFrame 不校验(仅 state==1 校验)
+    // state==1 且 animFrame>5(客户端拿它当 6 帧数组下标)
+    proto::SnapMsg boom = s;
+    boom.tanks[0].state = 1; boom.tanks[0].animFrame = 6;
+    CHECK(!proto::decodeSnap(proto::encodeSnap(boom).data(),
+                             proto::encodeSnap(boom).size()));
+    boom.tanks[0].animFrame = 5; // 边界值 5 合法
+    CHECK(proto::decodeSnap(proto::encodeSnap(boom).data(),
+                            proto::encodeSnap(boom).size()));
+    // owner>1 / missileCount>64
+    proto::SnapMsg many = s; many.missiles.resize(65, {0.f, 0.f, 0.f, 0});
+    CHECK(!proto::decodeSnap(proto::encodeSnap(many).data(),
+                             proto::encodeSnap(many).size()));
+    proto::SnapMsg own = s; own.missiles.push_back({0.f, 0.f, 0.f, 2});
+    CHECK(!proto::decodeSnap(proto::encodeSnap(own).data(),
+                             proto::encodeSnap(own).size()));
+    // ERR reason 只定义 1/2, 3=坏包
+    auto ebad = proto::encodeErr(3, 1);
+    CHECK(!proto::decodeErr(ebad.data(), ebad.size()));
+}
+
+static void testSnapAcceptRule() {
+    using A = proto::Accept;
+    CHECK(proto::acceptVerdict(101, 100) == A::Apply);
+    CHECK(proto::acceptVerdict(100, 100) == A::Skip);   // 重复包: 事件不重放
+    CHECK(proto::acceptVerdict(99, 100) == A::Discard); // 旧包
+    // (暂停可见性 N1 的端到端验证在 Task 4 冒烟第 7 项, 纯函数层无增量可测)
+}
+
 int main() {
     testConversions();
     testDirectionSystem();
@@ -207,6 +322,10 @@ int main() {
     testRotatedAABB();
     testBounceBehaviour();
     testVoiceCommand();
+    testProtoQuantize();
+    testProtoRoundTrip();
+    testProtoBadPackets();
+    testSnapAcceptRule();
     if (failures == 0)
         std::printf("unit_tests: all passed\n");
     else
