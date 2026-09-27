@@ -4,7 +4,7 @@ project(tank-battle LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(SFML 3 REQUIRED COMPONENTS Graphics Audio Window System)
+find_package(SFML 3 REQUIRED COMPONENTS Graphics Audio Window System Network)
 
 # exe 图标资源(仅 Windows; windres 经 include 路径 res/ 查找 tank.ico)
 set(TB_SOURCES src/main.cpp src/Assets.cpp src/Game.cpp)
@@ -14,7 +14,7 @@ endif()
 
 add_executable(tank-battle ${TB_SOURCES})
 target_link_libraries(tank-battle PRIVATE
-    SFML::Graphics SFML::Audio SFML::Window SFML::System)
+    SFML::Graphics SFML::Audio SFML::Window SFML::System SFML::Network)
 if(WIN32)
     target_include_directories(tank-battle PRIVATE res)
 endif()

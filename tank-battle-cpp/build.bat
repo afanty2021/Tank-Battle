@@ -28,10 +28,20 @@ if errorlevel 1 (
     echo [error] windres failed
     exit /b 1
 )
+rem voice control helper (C# / System.Speech). Build failure is a warning only.
+rem NOTE: on this machine System.Speech.dll lives under the WPF subdirectory
+rem of the .NET framework dir, hence the full-path reference below.
+set CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe
+if not exist "%CSC%" set CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe
+set SSP=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\WPF\System.Speech.dll
+"%CSC%" /nologo /codepage:65001 /target:exe /r:"%SSP%" /out:tools\voice_control.exe tools\voice_control.cs
+if errorlevel 1 (
+    echo [warn] voice_control build failed - game runs without voice control
+)
 g++ -B%U%\bin\ -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion ^
     src/main.cpp src/Assets.cpp src/Game.cpp app_icon.res.o ^
     -o tank-battle.exe ^
-    -lsfml-graphics -lsfml-audio -lsfml-window -lsfml-system
+    -lsfml-graphics -lsfml-audio -lsfml-window -lsfml-system -lsfml-network
 if errorlevel 1 (
     echo [error] build failed
     exit /b 1

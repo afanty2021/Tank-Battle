@@ -2,10 +2,18 @@
 
 #include <SFML/Window.hpp>
 #include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <optional>
 
 Game::Game(Assets& assets, sf::RenderWindow& win) : a(assets), window(win) {
     if (a.sndMusicStart) titleMusic.emplace(*a.sndMusicStart);
     if (a.sndMusicGameOver) gameOverMusic.emplace(*a.sndMusicGameOver);
+    // 语音控制: 非阻塞收命令(助手由 main.cpp 拉起, 端口被占则功能禁用)
+    voiceSock.setBlocking(false);
+    voiceReady = voiceSock.bind(VoicePort) == sf::Socket::Status::Done;
+    std::cout << (voiceReady ? "[voice] 语音控制已就绪(UDP " : "[voice] 端口 ")
+              << VoicePort << (voiceReady ? ")" : " 被占用, 语音控制禁用") << '\n';
 }
 
 // ---------------- 精灵与碰撞 ----------------
@@ -67,6 +75,7 @@ void Game::handleEvent(const sf::Event& event) {
 // ---------------- 每帧逻辑(1/30s) ----------------
 
 void Game::update(float dt) {
+    pollVoice(dt);
     switch (phase) {
     case Phase::Title:
         // “等待 按下鼠标” -> “播放 开始游戏 音乐直到播放完毕”
@@ -114,6 +123,10 @@ void Game::startGame() {
     bullets.clear();
     fireCooldown = 0.f;
     turretManual = false;
+    voiceTurretRemain = 0.f;
+    voiceMoveDir = -1.f;
+    voiceMoveTimer = 0.f;
+    voiceFireWait = 0.f;
     spawnTimer = 0.f;                             // 敌方克隆循环立即先生成一个
     phase = Phase::Playing;
 }
@@ -137,14 +150,25 @@ void Game::updatePlayer(float dt) {
         const bool right = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right);
         const sf::Vector2i mouseNow = sf::Mouse::getPosition(window);
         if (left || right) turretManual = true;
-        if (mouseNow != lastMousePos) turretManual = false;
+        if (mouseNow != lastMousePos) {
+            turretManual = false;
+            voiceTurretRemain = 0.f; // 鼠标接管时取消未完成的语音旋转
+        }
         lastMousePos = mouseNow;
-        if (left || right)
+        if (std::abs(voiceTurretRemain) > 0.01f) {
+            // 语音口令: 按角度差旋转到目标(期间与方向键一样暂停鼠标跟随)
+            turretManual = true;
+            const float step = std::min(VoiceTurretSpeed * dt, std::abs(voiceTurretRemain));
+            const float s = voiceTurretRemain > 0.f ? step : -step;
+            player.turretDir += s;
+            voiceTurretRemain -= s;
+        } else if (left || right) {
             player.turretDir += (right ? TurretTurnSpeed : -TurretTurnSpeed) * dt;
-        else if (!turretManual)
+        } else if (!turretManual) {
             player.turretDir = stage::pointDirection(
                 player.pos,
                 stage::toStage(window.mapPixelToCoords(mouseNow)));
+        }
     }
 
     // 车身移动循环不监听“被击中/游戏结束”: 玩家被击中后(含整个结算音乐期间)
@@ -169,6 +193,18 @@ void Game::updatePlayer(float dt) {
             player.dir = 90.f;
             player.pos.x += PlayerSpeed;
         }
+        // 语音移动口令: 持续朝该方向走, 直到“停”或 VoiceMoveMaxTime 自动停
+        if (voiceMoveDir >= 0.f) {
+            player.dir = voiceMoveDir;
+            if (voiceMoveDir == 0.f && player.pos.y < PlayerMaxY)
+                player.pos.y += PlayerSpeed;
+            else if (voiceMoveDir == 180.f && player.pos.y > PlayerMinY)
+                player.pos.y -= PlayerSpeed;
+            else if (voiceMoveDir == 90.f && player.pos.x < PlayerMaxX)
+                player.pos.x += PlayerSpeed;
+            else if (voiceMoveDir == -90.f && player.pos.x > PlayerMinX)
+                player.pos.x -= PlayerSpeed;
+        }
     }
     if (!player.alive && player.explosionFrame >= 0 && phase == Phase::PlayerDying) {
         // 玩家爆炸: b1..b6 每帧 0.1s, 播完 -> 广播“游戏结束”
@@ -185,15 +221,78 @@ void Game::updatePlayer(float dt) {
 
     // 鼠标左键或空格发射导弹(0.5 秒冷却), 从炮塔位置沿炮塔朝向飞出。
     // 导弹精灵的开火循环不监听“被击中/游戏结束”, 死亡与结算期间仍可发射。
-    // 空格为移植版新增的发射键(原版仅“按下鼠标”)
+    // 空格为移植版新增的发射键(原版仅“按下鼠标”); 语音“开炮”同享冷却
     fireCooldown -= dt;
+    if (voiceFireWait > 0.f) voiceFireWait -= dt;
     const bool fireHeld = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) ||
                           sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
     if (phase != Phase::Title && phase != Phase::TitleMusic && phase != Phase::Stopped &&
-        fireHeld && fireCooldown <= 0.f) {
+        (fireHeld || voiceFireWait > 0.f) && fireCooldown <= 0.f) {
         missiles.push_back({player.pos, player.turretDir});
         if (a.sndFirePlayer) playSound(*a.sndFirePlayer);
         fireCooldown = FireCooldown;
+        voiceFireWait = 0.f;
+    }
+}
+
+// ---------------- 语音控制(UDP 命令轮询) ----------------
+
+void Game::pollVoice(float dt) {
+    if (!voiceReady) return;
+    // 非阻塞收命令(每帧最多 8 条, 命令格式见 tools/voice_control.cs)
+    char buf[64];
+    for (int i = 0; i < 8; ++i) {
+        std::size_t got = 0;
+        std::optional<sf::IpAddress> addr;
+        unsigned short rport = 0;
+        if (voiceSock.receive(buf, sizeof(buf) - 1, got, addr, rport) !=
+            sf::Socket::Status::Done)
+            break;
+        buf[got] = '\0';
+        std::string cmd(buf);
+        while (!cmd.empty() &&
+               (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' '))
+            cmd.pop_back();
+        if (!cmd.empty()) handleVoiceCommand(cmd);
+    }
+    // 心跳: 告知助手游戏仍在运行(助手失联 5 秒自动退出)
+    voicePingTimer -= dt;
+    if (voicePingTimer <= 0.f) {
+        voicePingTimer = 1.f;
+        (void)voiceSock.send("PING", 4, sf::IpAddress(127, 0, 0, 1),
+                             static_cast<unsigned short>(VoicePort + 1));
+    }
+    if (voiceMoveTimer > 0.f) {
+        voiceMoveTimer -= dt;
+        if (voiceMoveTimer <= 0.f) voiceMoveDir = -1.f;
+    }
+}
+
+void Game::handleVoiceCommand(const std::string& cmd) {
+    if (cmd == "FIRE") {
+        voiceFireWait = 1.f; // 等冷却的窗口期
+    } else if (cmd == "STOP") {
+        voiceMoveDir = -1.f;
+        voiceMoveTimer = 0.f;
+        voiceTurretRemain = 0.f;
+    } else if (cmd.rfind("TURRET_CW ", 0) == 0) {
+        voiceTurretRemain = std::clamp(voiceTurretRemain + static_cast<float>(std::atoi(cmd.c_str() + 10)),
+                                       -360.f, 360.f);
+    } else if (cmd.rfind("TURRET_CCW ", 0) == 0) {
+        voiceTurretRemain = std::clamp(voiceTurretRemain - static_cast<float>(std::atoi(cmd.c_str() + 11)),
+                                       -360.f, 360.f);
+    } else if (cmd == "MOVE_UP") {
+        voiceMoveDir = 0.f;
+        voiceMoveTimer = VoiceMoveMaxTime;
+    } else if (cmd == "MOVE_DOWN") {
+        voiceMoveDir = 180.f;
+        voiceMoveTimer = VoiceMoveMaxTime;
+    } else if (cmd == "MOVE_LEFT") {
+        voiceMoveDir = -90.f;
+        voiceMoveTimer = VoiceMoveMaxTime;
+    } else if (cmd == "MOVE_RIGHT") {
+        voiceMoveDir = 90.f;
+        voiceMoveTimer = VoiceMoveMaxTime;
     }
 }
 

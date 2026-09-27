@@ -7,6 +7,8 @@
 
 #include <SFML/Graphics.hpp>
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 
 // 窗口尺寸变化时重设视图: 保持 4:3 等比缩放并居中, 拉伸会破坏
@@ -44,6 +46,15 @@ int main(int argc, char* argv[]) {
         window.setIcon(icon.getSize(), icon.getPixelsPtr());
 
     Game game(assets, window);
+
+// 语音控制助手(仅 Windows): 最小化启动, 游戏退出(心跳失联 5 秒)后自动关闭
+#ifdef _WIN32
+    if (std::filesystem::exists("tools/voice_control.exe"))
+        std::system("start \"tank-battle voice\" /MIN tools\\voice_control.exe");
+    else
+        std::cout << "[voice] 未找到 tools\\voice_control.exe, 语音控制不可用"
+                     "(build.bat 会自动编译)\n";
+#endif
 
     // 固定步长: 逻辑每 1/30 秒推进一步, 渲染每帧执行(与 Scratch 30fps 帧模型一致)
     sf::Clock clock;

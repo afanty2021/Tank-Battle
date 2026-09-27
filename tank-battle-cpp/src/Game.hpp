@@ -13,7 +13,9 @@
 #include "Assets.hpp"
 #include "common.hpp"
 
+#include <SFML/Network.hpp>
 #include <random>
+#include <string>
 #include <vector>
 
 struct Player {
@@ -74,6 +76,11 @@ private:
     static constexpr float EnemyFireInterval = 2.f;// control_wait 2
     static constexpr float ExplosionFrameTime = 0.1f;
     static constexpr float TurretTurnSpeed = 180.f; // ←/→ 键旋转炮塔(移植版新增, 每秒 180°)
+    // 语音控制(移植版新增, 仅 Windows, 助手见 tools/voice_control.cs):
+    // 助手识别中文口令后经本机 UDP 发命令; 心跳失联 5 秒助手自动退出
+    static constexpr unsigned short VoicePort = 52017;
+    static constexpr float VoiceTurretSpeed = 360.f;  // 语音口令的炮塔转速(度/秒)
+    static constexpr float VoiceMoveMaxTime = 3.f;    // 移动口令无“停”时的自动停止
     // 玩家活动范围: motion_if x>-211 / x<205 / y>-154 / y<150
     static constexpr float PlayerMinX = -211.f, PlayerMaxX = 205.f;
     static constexpr float PlayerMinY = -154.f, PlayerMaxY = 150.f;
@@ -83,6 +90,8 @@ private:
     void updatePlayer(float dt);
     void updateEnemies(float dt);
     void updateProjectiles(float dt);
+    void pollVoice(float dt);
+    void handleVoiceCommand(const std::string& cmd);
     void playSound(const sf::SoundBuffer& buffer);
     static sf::Sprite makeSprite(const Costume& c, float sizePercent,
                                  sf::Vector2f pos, float dir);
@@ -102,6 +111,14 @@ private:
     float fireCooldown = 0.f;
     bool turretManual = false;  // 方向键接管炮塔期间暂停鼠标跟随; 鼠标一动即恢复
     sf::Vector2i lastMousePos{};
+    // 语音控制状态(端口绑定失败则 voiceReady=false, 功能自动禁用)
+    sf::UdpSocket voiceSock;
+    bool voiceReady = false;
+    float voiceTurretRemain = 0.f; // 待旋转角度(带符号, 正=顺时针, 语音/方向键共用 manual 态)
+    float voiceMoveDir = -1.f;     // 语音移动方向(Scratch 方向值; <0=无)
+    float voiceMoveTimer = 0.f;    // 语音移动自动停止计时
+    float voiceFireWait = 0.f;     // “开炮”等待冷却的窗口期
+    float voicePingTimer = 0.f;    // 给助手的心跳计时
     float spawnTimer = 0.f;      // 敌方生成计时(1~5 秒随机)
     std::mt19937 rng{std::random_device{}()};
     std::vector<sf::Sound> voices;      // 复用的播放通道

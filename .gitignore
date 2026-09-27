@@ -3,6 +3,7 @@ tank-battle-cpp/tank-battle.exe
 tank-battle-cpp/unit_tests.exe
 tank-battle-cpp/*.dll
 tank-battle-cpp/app_icon.res.o
+tank-battle-cpp/tools/voice_control.exe
 
 # 自动化验证的临时截图/日志
 shot*.png
