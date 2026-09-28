@@ -166,23 +166,26 @@ class VoiceControl
             Console.WriteLine("[voice] (忽略 置信度" + r.Confidence.ToString("0.00") + ") " + r.Text);
             return;
         }
+        // 打印听到的原文+置信度(只进控制台日志); UDP 仍只发命令串本身,
+        // 游戏端 parse() 是精确匹配, 带附加文本会解析失败
+        string heard = " (听到:\"" + r.Text + "\" 置信度" + r.Confidence.ToString("0.00") + ")";
         string name = r.Grammar.Name;
         if (name == "TURRET_CW" || name == "TURRET_CCW")
         {
             int deg = 30;
             if (r.Semantics != null && r.Semantics.Value is int) deg = (int)r.Semantics.Value;
-            Send(name + " " + deg);
+            Send(name + " " + deg, heard);
         }
-        else Send(name);
+        else Send(name, heard);
     }
 
-    static void Send(string s)
+    static void Send(string cmd, string log)
     {
-        Console.WriteLine("[voice] " + s);
+        Console.WriteLine("[voice] " + cmd + log);
         if (udp == null) return;
         try
         {
-            byte[] b = Encoding.UTF8.GetBytes(s + "\n");
+            byte[] b = Encoding.UTF8.GetBytes(cmd + "\n");
             udp.Send(b, b.Length, "127.0.0.1", port);
         }
         catch (Exception) { }
