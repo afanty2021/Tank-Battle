@@ -20,6 +20,8 @@ Scratch 3《坦克大战》（.sb3，位于 `坦克大战素材和源码\`）的
 - 所有 `.bat`/`.cmd` 必须是 CRLF，否则 cmd 解析括号块错乱。
 - Read 工具读图片会上传 CDN 而非内联显示：截图验证改用 PIL 像素统计或 analyze_image 工具。
 - 运行时冒烟：`powershell.exe -ExecutionPolicy Bypass -File tools/run_and_shoot.ps1 -Phase playing`（默认只抓标题画面）。
+- 安全软件同样吞非客户区窗口操作注入：自动化驱动窗口用 MoveWindow（SetWindowPos 被吞）。
+- Git Bash 下 g++ 的 -B 参数要用 Windows 风格路径（-B"D:/.../ucrt64/bin/"），MSYS 路径转换会破坏它。
 
 ## 架构边界
 
