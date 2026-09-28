@@ -145,17 +145,29 @@ for _ in range(30):
         break
 expect(sn and sn["phase"] == 1, "forged SNAP/BYE ignored (source filter)")
 
-# 7) 暂停(N1): 停发 INP >1s(KEEP 照发), 必须收到 phase=3 且 tick 前进。
-#    心跳只从 s2 发(同 IP 另一源端口, 正是 §6.3 KEEP 豁免定义的形态):
-#    若源过滤被收窄成仅主端口, s2 的 KEEP 全被丢, 会话失活, 本项失败
+# 7) 暂停(N1): 停发 INP(KEEP 照发), 必须收到 phase=3 且 tick 前进。
+#    心跳只从 s2 发(同 IP 另一源端口, 正是 §6.3 KEEP 豁免定义的形态)。
+#    观察窗必须盖过 5s 失活点(合并门评审 Important#1: 旧 3s 窗够不着
+#    lastAny_ 失活, 对 KEEP 豁免零守护): 若豁免被删, s2 心跳全被源过滤
+#    丢弃, 最后一个 INP 后 5s lastAny_ 失活 -> remoteInputStale 转假,
+#    主机退出暂停(stub 形态: phase 跳回 1; 真 Game 形态: Disconnected
+#    散会断流)。故断言四件套: 进得去暂停 / 入停后 phase 不回退 /
+#    失活点后仍有快照到达 / 暂停期 tick 单调前进
 t0 = time.time()
-paused = None
-while time.time() - t0 < 3.0:
-    paused = next_snap(0.5, keep_sock=s2)   # 内部只发 keep 不发 inp
-    if paused and paused["phase"] == 3:
-        break
-expect(paused and paused["phase"] == 3, "pause visible (phase=3, tick=%d)" %
-       (paused["tick"] if paused else -1))
+samples = []                               # (接收时刻, phase, tick)
+while time.time() - t0 < 8.0:
+    sn7 = next_snap(0.5, keep_sock=s2)     # 内部只发 keep 不发 inp
+    if sn7 is not None:
+        samples.append((time.time() - t0, sn7["phase"], sn7["tick"]))
+p3 = next((i for i, x in enumerate(samples) if x[1] == 3), None)
+expect(p3 is not None, "pause visible (phase=3 within window)")
+expect(all(x[1] == 3 for x in samples[p3:]),
+       "phase stays 3 after entry (%d samples)" % (len(samples) - p3))
+expect(samples[-1][0] > 6.0,
+       "snaps still arriving past 5s expiry horizon (last t+%.1fs)" %
+       samples[-1][0])
+expect(all(b[2] > a[2] for a, b in zip(samples[p3:], samples[p3 + 1:])),
+       "tick advances while paused (%d samples)" % (len(samples) - p3))
 
 # 8) 恢复: 继续发 INP, phase 回 1
 for _ in range(30):
