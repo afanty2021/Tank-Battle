@@ -97,8 +97,8 @@ inline void load(sf::Texture& t, const char* file) {
 
 // 旋转轴心(画布像素, 数据来自 assets/manifest.json——改素材时同步改这里。
 // 常数只在这里写一遍, draw_tank/draw_turret 共用, 防止三处拷贝漂移)
-inline const sf::Vector2f kBodyOrigin{112.15f * stage::Scale, 54.04f * stage::Scale};
-inline const sf::Vector2f kTurretOrigin{63.5f * stage::Scale, 45.12f * stage::Scale};
+inline const sf::Vector2f kBodyOrigin{112.15f * stage::Scale, 54.04167f * stage::Scale};
+inline const sf::Vector2f kTurretOrigin{63.54375f * stage::Scale, 45.07708f * stage::Scale};
 inline const sf::Vector2f kMissileOrigin{28.f * stage::Scale, 9.f * stage::Scale};
 
 // 按游戏里的样子画一张精灵图: origin 是旋转轴心(画布像素),
@@ -235,10 +235,15 @@ inline bool key_pressed(const std::string& key) {
     if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z')     // 26 个字母键
         return sf::Keyboard::isKeyPressed(
             static_cast<sf::Keyboard::Key>(k[0] - 'A'));
-    if (k.size() == 1 && k[0] >= '0' && k[0] <= '9')     // 数字键(选难度用)
+    if (k.size() == 1 && k[0] >= '0' && k[0] <= '9') {   // 数字键(主键区+小键盘)
+        const int d = k[0] - '0';
         return sf::Keyboard::isKeyPressed(
-            static_cast<sf::Keyboard::Key>(
-                static_cast<int>(sf::Keyboard::Key::Num0) + (k[0] - '0')));
+                   static_cast<sf::Keyboard::Key>(
+                       static_cast<int>(sf::Keyboard::Key::Num0) + d)) ||
+               sf::Keyboard::isKeyPressed(
+                   static_cast<sf::Keyboard::Key>(
+                       static_cast<int>(sf::Keyboard::Key::Numpad0) + d));
+    }
     if (k == "SPACE")  return sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
     if (k == "UP")     return sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up);
     if (k == "DOWN")   return sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down);
@@ -283,9 +288,9 @@ inline void play_sound(const std::string& name) {
 inline void play_music(const std::string& name) {
     using namespace sl;
     auto& g = S();
-    // 音乐用专用单通道: 同一时刻只有一首, 重开即从头播。
-    // emplace 会先析构旧通道(自动停播)再构造新的, 不经过 vector,
-    // 避免"正在播放的通道被搬移"弄坏堆
+    // 音乐用专用单通道(和正式版一样用 optional 装配):
+    // 同一时刻只有一首; 换曲/重开时 emplace 先析构旧通道(自动停播)
+    // 再造新的, 新曲子从头播。
     if (name == "start") {
         g.musicCh.emplace(g.musicStartBuf);
         g.musicCh->play();

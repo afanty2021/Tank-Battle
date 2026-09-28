@@ -11,7 +11,8 @@
 //  玩法: 坦克左右移动, 空格发射; 敌人从顶上慢慢爬下来, 打中 +1 分
 //  并在随机位置重生。
 //
-//  编译: 双击 lessons\compile.bat 输入课号 6 回车, 然后双击 L06.exe
+//  编译: 双击 lessons\compile.bat 输入课号 6 回车,
+//        然后双击上一层 tank-battle-cpp\ 文件夹里的 L06.exe
 // ============================================================
 #include "scratch_like.hpp"
 #include <string>              // std::to_string 在这里

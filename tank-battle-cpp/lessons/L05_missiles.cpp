@@ -11,7 +11,8 @@
 //    mx[i]             取第 i 格(编号从 0 开始!)
 //    mx.erase(...)     删掉第 i 格(= 删除克隆体)
 //
-//  编译: 双击 lessons\compile.bat 输入课号 5 回车, 然后双击 L05.exe
+//  编译: 双击 lessons\compile.bat 输入课号 5 回车,
+//        然后双击上一层 tank-battle-cpp\ 文件夹里的 L05.exe
 // ============================================================
 #include "scratch_like.hpp"
 #include <vector>              // 用数组要先"借"这个工具箱

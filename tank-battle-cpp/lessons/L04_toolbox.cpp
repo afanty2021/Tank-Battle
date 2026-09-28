@@ -10,7 +10,8 @@
 //  另一个任务: 用记事本打开 scratch_like.hpp 看一眼——你会发现
 //  老师的工具箱也就是一堆普通的函数和数据, 没有魔法。
 //
-//  编译: 双击 lessons\compile.bat 输入课号 4 回车, 然后双击 L04.exe
+//  编译: 双击 lessons\compile.bat 输入课号 4 回车,
+//        然后双击上一层 tank-battle-cpp\ 文件夹里的 L04.exe
 // ============================================================
 #include "scratch_like.hpp"
 

@@ -6,7 +6,8 @@
 //    2. key_pressed("W")         —— 就是【按下 W 键?】
 //    3. 比较运算 > 和 <          —— 判断有没有出界
 //
-//  编译: 双击 lessons\compile.bat 输入课号 2 回车, 然后双击 L02.exe
+//  编译: 双击 lessons\compile.bat 输入课号 2 回车,
+//        然后双击上一层 tank-battle-cpp\ 文件夹里的 L02.exe
 //  (按 Esc 或点 X 退出)
 // ============================================================
 #include "scratch_like.hpp"

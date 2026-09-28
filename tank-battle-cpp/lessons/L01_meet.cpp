@@ -6,7 +6,8 @@
 //    2. 变量 x 和 y  —— 就是 Scratch 舞台的横纵坐标(中心是 0)
 //    3. 编译         —— 把 .cpp 文本变成能双击运行的 .exe
 //
-//  编译: 双击 lessons\compile.bat 输入课号 1 回车, 然后双击 L01.exe
+//  编译: 双击 lessons\compile.bat 输入课号 1 回车,
+//        然后双击上一层 tank-battle-cpp\ 文件夹里的 L01.exe
 // ============================================================
 #include "scratch_like.hpp"
 

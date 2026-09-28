@@ -13,7 +13,8 @@
 //          draw_start_screen()  draw_gameover_screen()
 //
 //  规则: 敌人漏到底 3 次 → 游戏结束。
-//  编译: 双击 lessons\compile.bat 输入课号 7 回车, 然后双击 L07.exe
+//  编译: 双击 lessons\compile.bat 输入课号 7 回车,
+//        然后双击上一层 tank-battle-cpp\ 文件夹里的 L07.exe
 // ============================================================
 #include "scratch_like.hpp"
 #include <string>
