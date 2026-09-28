@@ -131,7 +131,7 @@ private:
     std::jthread voicePingThread;
     bool voiceBound = false;
     float voiceTurretRemain = 0.f; // 待旋转角度(带符号, 正=顺时针, 语音/方向键共用 manual 态)
-    float voiceMoveDir = -1.f;     // 语音移动方向(Scratch 方向值; <0=无)
+    float voiceMoveDir = -1.f;     // 语音移动方向(Scratch 方向值; -1=无。左移是 -90, 勿用 <0 判无)
     float voiceMoveTimer = 0.f;    // 语音移动自动停止计时
     float voiceFireWait = 0.f;     // “开炮”等待冷却的窗口期
     float spawnTimer = 0.f;      // 敌方生成计时(1~5 秒随机)

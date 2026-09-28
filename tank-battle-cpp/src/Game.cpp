@@ -219,8 +219,10 @@ void Game::updatePlayer(float dt) {
             player.dir = 90.f;
             player.pos.x += PlayerSpeed;
         }
-        // 语音移动口令: 持续朝该方向走, 直到“停”或 VoiceMoveMaxTime 自动停
-        if (voiceMoveDir >= 0.f) {
+        // 语音移动口令: 持续朝该方向走, 直到“停”或 VoiceMoveMaxTime 自动停。
+        // 哨兵是 -1(无口令); 不能写 >= 0 —— 左移是 Scratch 方向值 -90, 会被
+        // 当成"无口令"吞掉(用户实测发现)
+        if (voiceMoveDir != -1.f) {
             player.dir = voiceMoveDir;
             if (voiceMoveDir == 0.f && player.pos.y < PlayerMaxY)
                 player.pos.y += PlayerSpeed;
