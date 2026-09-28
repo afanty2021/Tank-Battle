@@ -11,7 +11,7 @@
 //  玩法: 坦克左右移动, 空格发射; 敌人从顶上慢慢爬下来, 打中 +1 分
 //  并在随机位置重生。
 //
-//  编译方法: 双击 lessons\compile.bat L06 , 然后双击 L06.exe
+//  编译: 双击 lessons\compile.bat 输入课号 6 回车, 然后双击 L06.exe
 // ============================================================
 #include "scratch_like.hpp"
 #include <string>              // std::to_string 在这里
@@ -35,8 +35,8 @@ int main() {
         // ---- 1. 驾驶 + 发射(第 2/5 课) ----
         if (key_pressed("A")) x = x - 5;
         if (key_pressed("D")) x = x + 5;
-        if (x > 230)  x = 230;
-        if (x < -230) x = -230;
+        if (x > 205)  x = 205;    // 活动范围与第 2 课/正式版一致
+        if (x < -211) x = -211;    // (两边不对称是原版积木就这么写的)
 
         if (fire_wait > 0) fire_wait = fire_wait - 1;
         if (key_pressed("SPACE") && fire_wait == 0) {

@@ -13,7 +13,7 @@
 //          draw_start_screen()  draw_gameover_screen()
 //
 //  规则: 敌人漏到底 3 次 → 游戏结束。
-//  编译: 双击 lessons\compile.bat L07 , 然后双击 L07.exe
+//  编译: 双击 lessons\compile.bat 输入课号 7 回车, 然后双击 L07.exe
 // ============================================================
 #include "scratch_like.hpp"
 #include <string>
@@ -34,6 +34,9 @@ int main() {
     while (window_open()) {
         if (state == 0) {
             // ============ 开场画面 ============
+            // 开场图铺满整个屏幕, 上一帧的东西全被盖住, 所以这两个画面
+            // 状态可以不 clear()(第 5 课的铁律针对会露底色的普通画面;
+            // 全屏大图盖住一切时是例外)
             draw_start_screen();               // 原版的开场图!
             draw_text("按空格开始", 0, -60);
             if (key_pressed("SPACE")) {
@@ -44,8 +47,8 @@ int main() {
             // ============ 游戏中(第 6 课 + 声音) ============
             if (key_pressed("A")) x = x - 5;
             if (key_pressed("D")) x = x + 5;
-            if (x > 230)  x = 230;
-            if (x < -230) x = -230;
+            if (x > 205)  x = 205;    // 活动范围与第 2 课/正式版一致
+            if (x < -211) x = -211;    // (两边不对称是原版积木就这么写的)
 
             if (fire_wait > 0) fire_wait = fire_wait - 1;
             if (key_pressed("SPACE") && fire_wait == 0) {
@@ -94,8 +97,9 @@ int main() {
         } else {
             // ============ 结束画面 ============
             draw_gameover_screen();
-            draw_text("按空格再来一局", 0, -60);
-            if (key_pressed("SPACE")) {        // 重置一切, 回开场
+            draw_text("按 R 再来一局", 0, -60);
+            // 用 R 而不是空格: 玩家松手慢半拍, 空格就会把新的一局"穿"进去
+            if (key_pressed("R")) {            // 重置一切, 回开场
                 x = 0; y = -150;
                 mx.clear();  my.clear();
                 fire_wait = 0;

@@ -11,16 +11,26 @@ rem ============================================================
 setlocal
 cd /d %~dp0..
 
-if "%1"=="" (
-    echo usage: compile.bat L01
-    echo lessons: L01 L02 L03 L04 L05 L06 L07 L08
+rem No argument = interactive menu (so double-clicking just works);
+rem with an argument (compile.bat L03) it builds that lesson directly.
+set LESSON=%1
+if not "%LESSON%"=="" goto have_lesson
+echo ============================================
+echo   Tank Battle C++ - lesson builder
+echo   lessons: 1 2 3 4 5 6 7 8
+echo ============================================
+set /p NUM=which lesson 1-8 : 
+set LESSON=L0%NUM%
+:have_lesson
+if "%LESSON%"=="" (
+    echo [error] no lesson chosen
     exit /b 1
 )
 
 set SRC=
-for %%f in (lessons\%1_*.cpp) do set SRC=%%f
+for %%f in (lessons\%LESSON%_*.cpp) do set SRC=%%f
 if "%SRC%"=="" (
-    echo [error] no lessons\%1_*.cpp found
+    echo [error] no lessons\%LESSON%_*.cpp found
     exit /b 1
 )
 
@@ -40,11 +50,11 @@ if exist "%U%\bin\g++.exe" (
 )
 
 echo compiling %SRC% ...
-"%GXX%" %EXTRA% -std=c++20 -O1 -Wall %SRC% -o %1.exe ^
+"%GXX%" %EXTRA% -std=c++20 -O1 -Wall %SRC% -o %LESSON%.exe ^
     -lsfml-graphics -lsfml-audio -lsfml-window -lsfml-system
 if errorlevel 1 (
     echo [error] build failed - check for Chinese punctuation / missing ;
     exit /b 1
 )
-echo OK: %1.exe - double-click it to play (stay in this folder)
+echo OK: %LESSON%.exe - double-click it to play (stay in this folder)
 endlocal

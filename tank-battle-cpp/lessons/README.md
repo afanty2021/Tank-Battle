@@ -9,20 +9,28 @@
 | `scratch_like.hpp` | 教学工具箱：藏起窗口/图片/按键，只留与积木同名的函数（`open_window`、`key_pressed`、`draw_tank`…）。学生不用看懂它 |
 | `L01_meet.cpp` | 第 1 课：编译运行、while=重复执行、变量=坐标 |
 | `L02_drive.cpp` | 第 2 课：if=如果那么、按键控制、边界判断 |
+| `L03_bounce.cpp` | 第 3 课：取反、双向速度、边缘反弹 |
+| `L04_toolbox.cpp` | 第 4 课：函数与 return（自制积木）、研读工具箱 |
+| `L05_missiles.cpp` | 第 5 课：vector 数组、发射/删除导弹 |
+| `L06_targets.cpp` | 第 6 课：随机数、碰撞、记分文字 |
+| `L07_screens.cpp` | 第 7 课：状态变量、开场/结束画面、声音 |
+| `L08_free.cpp` | 第 8 课：毕业改造（鼠标瞄准 + 改造单） |
 | `workbook.md` | 改造练习册：在**正式版**上动手的安全改法（数值关/规则关/创造关） |
 | `compile.bat` | 一键编译某课：`compile.bat L01` → `L01.exe` |
 
 ## 上课流程（每课 45 分钟）
 
-1. 学生双击 `lessons\compile.bat L01` 编译，双击 `L01.exe` 运行；
+1. 学生双击 `lessons\compile.bat`，按提示输入课号（如 `1`）回车编译，再双击 `L01.exe` 运行（命令行带参 `compile.bat L01` 亦可）；
 2. 跟着课文件的注释逐段读懂（先读后改，不要求白纸写代码）；
 3. 完成"试一试"，每题都有肉眼可见的效果；
 4. 学有余力的学生打开 `workbook.md` 去改正式版。
 
 ## 环境准备（教师机/学生机，一次性）
 
-- 解压绿色编译器包（w64devkit 或 MSYS2）到固定位置，保证命令行能找到 `g++`；`compile.bat` 会优先用 PATH 里的 g++，找不到再回落到本仓库开发机的 MSYS2 路径；
-- SFML 的头文件/库/DLL：本项目 `tank-battle-cpp\` 下已放好 25 个运行 DLL；编译用的头文件与导入库由编译器环境提供（MSYS2 的 `mingw-w64-ucrt-x86_64-sfml` 包）；
+- 编译环境**唯一验证过的路线**：把教师机上装好 SFML 的 MSYS2 `ucrt64` 整个目录拷到学生机固定位置（默认 `D:\Scoop\apps\msys2\current\ucrt64`，路径不同需改 `compile.bat` 顶部的 `U=`）；
+- 注意：w64devkit 之类的"绿色 g++"**不含 SFML 头文件/导入库**，且其 MSVCRT 风味与本项目自带的 UCRT 版 25 个 DLL 混链有 ABI 风险，不要用；
+- SFML 运行 DLL 已在 `tank-battle-cpp\` 下备好（25 个）；编译用的头文件与导入库来自上面拷贝的 ucrt64（教师机 `pacman -S mingw-w64-ucrt-x86_64-sfml` 装好后原样拷）；
+- `compile.bat` 找编译器的顺序：先试本仓库开发机的 MSYS2 固定路径（该机安全软件要求 `-B`），不存在再用 PATH 里的 `g++`；
 - 整个 `tank-battle-cpp\` 目录连同编译器拷给学生即可，**无网环境可用**；
 - 运行任何 exe（课例或正式版）都必须在 `tank-battle-cpp\` 目录下（按当前目录找 `assets\`）。
 
@@ -40,6 +48,8 @@
 | 8 | `L08_free.cpp` | 毕业改造 | 面向鼠标 → `face_direction`/`step_x`/`step_y` + 改造单 |
 
 框架函数按"第几课启用"分组写在 `scratch_like.hpp` 顶部的目录里，学生不需要一次记住全部——每课的课文只会用当课及之前的函数。
+
+课时提示：L07 信息量大（状态机 + 声音 + 重开流程），45 分钟偏紧——可拆两段上：前一段先给 L06 的成品加音效热身，后一段再引入状态变量做开场/结束画面。
 
 学完 8 课，正式版 `tank-battle.exe`（`src\` 目录）就是"毕业参考答案"：结构和他们造的小版本一一对应（`Game.hpp` 顶部常量 = 每条积木的参数，`Phase` 状态机 = 第 7 课 state 的完整版）。
 

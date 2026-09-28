@@ -20,7 +20,7 @@
 //  我的改造: ____________
 //  同学吐槽 1: ____________  2: ____________  3: ____________
 //
-//  编译: 双击 lessons\compile.bat L08 , 然后双击 L08.exe
+//  编译: 双击 lessons\compile.bat 输入课号 8 回车, 然后双击 L08.exe
 // ============================================================
 #include "scratch_like.hpp"
 #include <string>
@@ -51,8 +51,8 @@ int main() {
             // ---- 驾驶: 左右移动 ----
             if (key_pressed("A")) x = x - 5;
             if (key_pressed("D")) x = x + 5;
-            if (x > 230)  x = 230;
-            if (x < -230) x = -230;
+            if (x > 205)  x = 205;    // 活动范围与第 2 课/正式版一致
+            if (x < -211) x = -211;    // (两边不对称是原版积木就这么写的)
 
             // ---- 炮塔永远指向鼠标(正式版的核心操作!) ----
             float aim = face_direction(x, y, mouse_x(), mouse_y());
@@ -114,8 +114,8 @@ int main() {
             }
         } else {
             draw_gameover_screen();
-            draw_text("分数: " + std::to_string(score) + "  按空格再来一局", 0, -60);
-            if (key_pressed("SPACE")) {
+            draw_text("分数: " + std::to_string(score) + "  按 R 再来一局", 0, -60);
+            if (key_pressed("R")) {            // 用 R 防止空格没松开直接穿回
                 x = 0; y = -150;
                 mx.clear();  my.clear();  md.clear();
                 fire_wait = 0;
