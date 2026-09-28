@@ -72,6 +72,26 @@ class VoiceControl
         return c;
     }
 
+    static Grammar Move(CultureInfo c)
+    {
+        // 移动别名: 前进/后退/退后(不含上/下字样, 声学最稳的一组, 实测
+        // 0.74~0.85)。四向本体(上移/下移/左移/右移)是 LoadGrammars 里的
+        // 四个独占小语法(0.99)。
+        // 引擎对 上/下 两字声学区分力弱: 任何"向上/向下"多字组合(向上
+        // 移动/往下走/向下...)实测置信度只有 0.3~0.6 且互抢翻转(用户实测
+        // "向下移动"被听成"向上移动"), 一律不收——这些说法只会在 0.65
+        // 阈值下被安全忽略, 绝不会反向行驶。组合越多还会摊薄别的路径
+        // (加 8 条二字口令后"前进"就被 STOP 语法抢走, 实测), 故保持最小
+        var b = new Choices();
+        b.Add(new SemanticResultValue("前进", 1));
+        b.Add(new SemanticResultValue("后退", 2));
+        b.Add(new SemanticResultValue("退后", 2));
+        var bare = new GrammarBuilder();
+        bare.Culture = c;
+        bare.Append(b);
+        return new Grammar(bare) { Name = "MOVE" };
+    }
+
     static void LoadGrammars(SpeechRecognitionEngine eng)
     {
         CultureInfo cult = eng.RecognizerInfo.Culture;
@@ -83,10 +103,12 @@ class VoiceControl
         eng.LoadGrammar(Turret(cult, "TURRET_CCW",
             new string[] { "逆时针", "逆时针转", "逆时针旋转",
                            "向左转", "向左旋转", "左转" }));
-        eng.LoadGrammar(Mk(cult, "MOVE_UP", new string[] { "上移", "向上移动", "前进" }));
-        eng.LoadGrammar(Mk(cult, "MOVE_DOWN", new string[] { "下移", "向下移动", "后退" }));
-        eng.LoadGrammar(Mk(cult, "MOVE_LEFT", new string[] { "左移", "向左移动" }));
-        eng.LoadGrammar(Mk(cult, "MOVE_RIGHT", new string[] { "右移", "向右移动" }));
+        // 短口令独占小语法: 每个只有一条路径, 干净语音置信度 0.99
+        eng.LoadGrammar(Mk(cult, "MOVE_UP", new string[] { "上移" }));
+        eng.LoadGrammar(Mk(cult, "MOVE_DOWN", new string[] { "下移" }));
+        eng.LoadGrammar(Mk(cult, "MOVE_LEFT", new string[] { "左移" }));
+        eng.LoadGrammar(Mk(cult, "MOVE_RIGHT", new string[] { "右移" }));
+        eng.LoadGrammar(Move(cult));
     }
 
     static int RunWav(string path)
@@ -161,7 +183,14 @@ class VoiceControl
 
     static void OnRecog(RecognitionResult r)
     {
-        if (r.Confidence < 0.4f)
+        // 阈值分档: FIRE/STOP 误识别代价小(多打一发/停一下), 0.4 即可;
+        // MOVE*/TURRET* 误识别代价大(反向行驶/炮塔乱转), 0.65 起才执行
+        // (劣化音频的错误识别实测集中在 0.50~0.59, 干净语音全在 0.9+)
+        string name = r.Grammar.Name;
+        bool lasting = name.StartsWith("MOVE") ||
+                       name == "TURRET_CW" || name == "TURRET_CCW";
+        float thr = lasting ? 0.65f : 0.4f;
+        if (r.Confidence < thr)
         {
             Console.WriteLine("[voice] (忽略 置信度" + r.Confidence.ToString("0.00") + ") " + r.Text);
             return;
@@ -169,8 +198,16 @@ class VoiceControl
         // 打印听到的原文+置信度(只进控制台日志); UDP 仍只发命令串本身,
         // 游戏端 parse() 是精确匹配, 带附加文本会解析失败
         string heard = " (听到:\"" + r.Text + "\" 置信度" + r.Confidence.ToString("0.00") + ")";
-        string name = r.Grammar.Name;
-        if (name == "TURRET_CW" || name == "TURRET_CCW")
+        if (name == "MOVE")
+        {
+            // 语义值 1~4 = 上/下/左/右; 缺语义不猜方向, 直接丢弃
+            if (r.Semantics == null || !(r.Semantics.Value is int)) return;
+            int d = (int)r.Semantics.Value;
+            string[] cmds = { null, "MOVE_UP", "MOVE_DOWN", "MOVE_LEFT", "MOVE_RIGHT" };
+            if (d < 1 || d > 4) return;
+            Send(cmds[d], heard);
+        }
+        else if (name == "TURRET_CW" || name == "TURRET_CCW")
         {
             int deg = 30;
             if (r.Semantics != null && r.Semantics.Value is int) deg = (int)r.Semantics.Value;
