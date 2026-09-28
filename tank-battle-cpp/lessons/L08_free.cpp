@@ -101,7 +101,7 @@ int main() {
             clear();
             draw_background();
             draw_enemy(ex, ey, 180);
-            draw_tank(x, y, 0);             // 车身朝上
+            draw_body(x, y, 0);             // 车身朝上(只画车身!)
             draw_turret(x, y, aim);         // 炮塔单独画, 朝鼠标
             for (int i = 0; i < (int)mx.size(); i++)
                 draw_missile(mx[i], my[i], md[i]);

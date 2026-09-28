@@ -55,6 +55,8 @@ void draw_gameover_screen();                // 结束画面(占满全屏)
 float mouse_x();                         // 【鼠标的 x 坐标】(舞台坐标)
 float mouse_y();                         // 【鼠标的 y 坐标】
 float face_direction(float x1, float y1, float x2, float y2); // 【面向 _】的角度
+void draw_body(float x, float y, float dir);    // 只画车身(第 8 课: 车身朝向和
+                                                // 炮塔朝向不同, 两个分开画)
 void draw_turret(float x, float y, float dir);  // 只画炮塔(车身不动炮塔转时用)
 float step_x(float dir, float steps);    // 【移动 steps 步】的横向分量
 float step_y(float dir, float steps);    // 【移动 steps 步】的纵向分量
@@ -197,6 +199,12 @@ inline void draw_tank(float x, float y, float dir) {
     // 车身和炮塔都画在 (x,y), 旋转轴心用上面统一定义的三个常数
     g.win.draw(make(g.bodyTex, kBodyOrigin, 0.30f, x, y, dir));
     g.win.draw(make(g.turretTex, kTurretOrigin, 0.30f, x, y, dir));
+}
+
+inline void draw_body(float x, float y, float dir) {
+    using namespace sl;
+    auto& g = S();
+    g.win.draw(make(g.bodyTex, kBodyOrigin, 0.30f, x, y, dir));
 }
 
 inline void draw_turret(float x, float y, float dir) {
