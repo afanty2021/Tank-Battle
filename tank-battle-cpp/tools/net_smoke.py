@@ -82,12 +82,14 @@ expect(snap is not None, "first SNAP arrived (joined)")
 expect(snap["phase"] == 0, "phase=countdown")
 last_tick = snap["tick"]
 
-def next_snap(timeout=3.0, keepalive=True):
+def next_snap(timeout=3.0, keepalive=True, keep_sock=None):
+    # keep_sock: 心跳发出的 socket, 默认主 socket s; 暂停测试传 s2
+    # (同 IP 另一源端口), 练 spec §6.3 的 KEEP 任意源端口豁免
     global last_tick
     t0 = time.time()
     while time.time() - t0 < timeout:
         if keepalive:
-            s.sendto(keep(), (HOST, PORT))  # 心跳走"另一端口"模拟独立 socket
+            (s if keep_sock is None else keep_sock).sendto(keep(), (HOST, PORT))
         try:
             b, _ = s.recvfrom(2048)
             if b[0] == 6:
@@ -143,11 +145,13 @@ for _ in range(30):
         break
 expect(sn and sn["phase"] == 1, "forged SNAP/BYE ignored (source filter)")
 
-# 7) 暂停(N1): 停发 INP 1.5s(KEEP 照发), 必须收到 phase=3 且 tick 前进
+# 7) 暂停(N1): 停发 INP >1s(KEEP 照发), 必须收到 phase=3 且 tick 前进。
+#    心跳只从 s2 发(同 IP 另一源端口, 正是 §6.3 KEEP 豁免定义的形态):
+#    若源过滤被收窄成仅主端口, s2 的 KEEP 全被丢, 会话失活, 本项失败
 t0 = time.time()
 paused = None
 while time.time() - t0 < 3.0:
-    paused = next_snap(0.5)   # 内部只发 keep 不发 inp
+    paused = next_snap(0.5, keep_sock=s2)   # 内部只发 keep 不发 inp
     if paused and paused["phase"] == 3:
         break
 expect(paused and paused["phase"] == 3, "pause visible (phase=3, tick=%d)" %

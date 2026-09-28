@@ -172,7 +172,9 @@ void NetSession::handlePacket(const std::uint8_t* p, std::size_t n,
     case proto::Id::Snap:
         // Joining 也在接受范围(spec §4): 客户端连接成功 = 第一个被接受的
         // SNAP. brief 片段外层只写 ClientSession 会让下面 !connected_ 分支
-        // 永不可达(ClientSession 无其他入口)——依 spec 修正为两者皆收
+        // 永不可达(ClientSession 无其他入口)——依 spec 修正为两者皆收。
+        // 版本不符的 SNAP 直接无视: 外层已闸 ver==kVersion, 版本协商由
+        // DISC/JOIN 上的 ERR 负责(原 else if 分支恒假, 终审已删)
         if ((role_ == Role::Joining || role_ == Role::ClientSession) &&
             ver == proto::kVersion) {
             if (auto m = proto::decodeSnap(p, n)) {
@@ -187,8 +189,6 @@ void NetSession::handlePacket(const std::uint8_t* p, std::size_t n,
                         events_.push_back({NetEvent::Kind::Connected});
                     }
                 }
-            } else if (auto e = proto::decodeErr(p, n); !e && ver != proto::kVersion) {
-                events_.push_back({NetEvent::Kind::VersionMismatch});
             }
         }
         break;
@@ -255,15 +255,18 @@ void NetSession::sendInput(const InputState& in) {
 
 // ---------------- 查询与收尾 ----------------
 
-bool NetSession::isHost() const {
-    return role_ == Role::HostWaiting || role_ == Role::HostSession;
-}
-
 bool NetSession::clientJoined() const { return role_ == Role::HostSession; }
 
 const InputState& NetSession::remoteInput() const { return remoteInput_; }
 
 bool NetSession::remoteReady() const { return peerReady_; }
+
+void NetSession::resetPeerReady() {
+    // Game 在进结算沿与双 R 重开点调用(终审#1): 对局期客户端不发 JOIN(ready
+    // 位只随 JOIN 上报), peerReady_ 会冻结在上一局双 R 重开时的 true ——
+    // 不清则下一局结算有 ~RTT+0.2s 主机单边重开窗口(违 spec §4 双方都按 R)
+    peerReady_ = false;
+}
 
 bool NetSession::remoteInputStale() const {
     // >1s 无 INP 且 KEEP 仍在(<=5s)才判"对端活着但主循环停摆"; 阶段闸在
@@ -286,8 +289,6 @@ std::vector<NetEvent> NetSession::takeEvents() {
     out.swap(events_);
     return out;
 }
-
-sf::IpAddress NetSession::peerAddress() const { return peerIp_; }
 
 const std::string& NetSession::peerName() const { return peerName_; }
 

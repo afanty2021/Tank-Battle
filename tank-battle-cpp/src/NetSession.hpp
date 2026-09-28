@@ -38,10 +38,12 @@ public:
     void close(bool sendBye); // BYE(尽力) + 停线程; Game 析构/Esc 时调用
 
     // 主机侧
-    bool isHost() const;
     bool clientJoined() const;        // 等待页 -> 倒计时的条件
     const InputState& remoteInput() const;
     bool remoteReady() const;         // 双 R 重开
+    void resetPeerReady();            // 进结算沿/双 R 重开点清对端 ready 位:
+                                      // 对局期无 JOIN, 不清则上局的 true 冻结到
+                                      // 下一局结算(终审#1 的单边重开窗口)
     bool remoteInputStale() const;    // 暂停判定: >1s 无 INP 且 KEEP 活
     void sendSnap(const proto::SnapMsg& s); // 内部 ++outTick(跨局单调)再编码发出
 
@@ -53,7 +55,6 @@ public:
     void setReady(bool r);                // R 状态随 JOIN 5Hz 上报
 
     std::vector<NetEvent> takeEvents();
-    sf::IpAddress peerAddress() const;
     const std::string& peerName() const; // 对端显示名(主机侧=客户端 JOIN 上报名)
 
 private:

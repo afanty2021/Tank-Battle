@@ -318,6 +318,7 @@ void Game::netStartHost() {
     }
     net_ = std::move(n); mode_ = Mode::NetHost; phase = Phase::Title; // 复用 Title 渲染底
     battle_ = BattleState{}; // (D) 上一场残局(Over)会挡住倒计时首帧注入
+    netWasOver_ = false; // (D/终审#1) netWasOver_ 兼作主机侧 Over 进入沿检测, 开局前清
 }
 
 void Game::netStartScan() {
@@ -349,7 +350,7 @@ void Game::requestDirectJoin(const std::string& hostIp) {
 void Game::netLeave() {
     if (net_) net_->close(true); // 尽力 BYE; UDP 丢包则对端 5s 无包超时兜底
     net_.reset(); mode_ = Mode::Solo; phase = Phase::Title;
-    netLocalReady_ = false; view_ = NetView{};
+    netLocalReady_ = false; netWasOver_ = false; view_ = NetView{};
     joiningStarted_ = false; netJoinWait_ = 0.f; // (D) Esc 后再 J 不吃 5s 旧等待
     netScanDone_ = false;
 }
@@ -440,13 +441,23 @@ void Game::netUpdateHost(float dt) {
         if (battle_.hit[i] && a.sndExplosion) playSound(*a.sndExplosion);
     }
     net_->sendSnap(makeSnap(battle_, paused));
+    // (终审#1) 进结算沿清对端 ready: 对局期客户端不发 JOIN(ready 位只随
+    // JOIN 上报), peerReady_ 会冻结在上一局双 R 重开时的 true —— 不清则
+    // 第二局起主机砸 R 有 ~RTT+0.2s 单边重开窗口(违 spec §4 双方都按 R)。
+    // netWasOver_ 兼作主机侧的 Over 进入沿检测(与客户端路径共用一变量,
+    // Host/Client 两模式互斥不串扰; 开新会话处已复位)
     if (battle_.phase == BattlePhase::Over) {
+        if (!netWasOver_) net_->resetPeerReady();
+        netWasOver_ = true;
         // 双 R 重开: 本机 R 置 netLocalReady_, 远端看 remoteReady()
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R)) netLocalReady_ = true;
         if (netLocalReady_ && net_->remoteReady()) {
             netLocalReady_ = false;
-            resetBattle(battle_, netDefs_);   // tick 在 NetSession, 永不重置(C1)
+            net_->resetPeerReady();         // 双保险: 重开后下一次 Over 重新要求双方 R
+            resetBattle(battle_, netDefs_); // tick 在 NetSession, 永不重置(C1)
         }
+    } else {
+        netWasOver_ = false; // 离开 Over(倒计时/战斗)即复位, 供下一次进入沿检测
     }
 }
 
