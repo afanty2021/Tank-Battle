@@ -20,12 +20,15 @@ Scratch 3《坦克大战》（.sb3，位于 `坦克大战素材和源码\`）的
 - 所有 `.bat`/`.cmd` 必须是 CRLF，否则 cmd 解析括号块错乱。
 - Read 工具读图片会上传 CDN 而非内联显示：截图验证改用 PIL 像素统计或 analyze_image 工具。
 - 运行时冒烟：`powershell.exe -ExecutionPolicy Bypass -File tools/run_and_shoot.ps1 -Phase playing`（默认只抓标题画面）。
+- 安全软件同样吞非客户区窗口操作注入：自动化驱动窗口用 MoveWindow（SetWindowPos 被吞）。
+- Git Bash 下 g++ 的 -B 参数要用 Windows 风格路径（-B"D:/.../ucrt64/bin/"），MSYS 路径转换会破坏它。
 
 ## 架构边界
 
 - `src/common.hpp`：纯逻辑（舞台↔窗口坐标、Scratch 方向体系、碰撞盒几何、边缘反弹），只依赖 `<SFML/System.hpp>`，必须保持可被 `tests/unit_tests.cpp` 直接 include 独立编译。
 - `src/Assets.*`：素材加载 + 造型元数据（旋转中心、alpha 紧包围盒）。坐标约定：`centerOffset` 为舞台 y 向上约定（画布 y 取负）；`toLocal` 的本地系是 y 向上、运动左侧为正。
 - `src/Game.*`：全部游戏逻辑——Phase 状态机对应 Scratch 广播链，实体更新与渲染；游戏常量在 `Game.hpp` 顶部，逐条对应积木参数，不要"顺手优化"。
+- `src/Battle.*`、`src/NetSession.*`、`src/Protocol.hpp`、`src/InputState.hpp`：局域网 1v1 对战（UDP 52021，主机权威+快照同步）。纯度约束与单人零改动原则见 `docs/superpowers/specs/2026-09-27-lan-multiplayer-design.md`；改协议必须同步 net_smoke.py。
 - `lessons/`：初一 C++ 入门课程（教学版，独立于正式版编译）。`scratch_like.hpp` 是教学工具箱（可 include `src/common.hpp` 复用换算函数，但**不得反向依赖** lessons；课例每课一个 `L??_*.cpp`，用 `lessons/compile.bat L01` 单文件编译，不进 build.bat）。改 `src/` 时注意别破坏 scratch_like.hpp 用到的接口（common.hpp 与 assets 路径）。
 - 反弹语义（scratch-vm 取证结论，勿回退）：仅当朝越界边运动才翻转方向；越界判定用翻转前的盒，位置钳制用**翻转后**重算的盒（setDirection→keepInFence 顺序）。改动前先看 `testBounceBehaviour`。
 

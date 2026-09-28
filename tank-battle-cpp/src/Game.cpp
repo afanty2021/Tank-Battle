@@ -1,4 +1,5 @@
 #include "Game.hpp"
+#include "NetSession.hpp"
 
 #include <SFML/Window.hpp>
 #include <algorithm>
@@ -26,6 +27,12 @@ Game::Game(Assets& assets, sf::RenderWindow& win) : a(assets), window(win) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         });
+}
+
+Game::~Game() {
+    // 联机收尾: 尽力发 BYE + 停心跳线程(NetSession 析构会再 close(false)
+    // 兜底一次); 单人模式 net_ 为空, 行为与原隐式析构一致
+    if (net_) net_->close(true);
 }
 
 // ---------------- 精灵与碰撞 ----------------
@@ -73,13 +80,41 @@ void Game::handleEvent(const sf::Event& event) {
     if (event.is<sf::Event::Closed>())
         quit = true;
     else if (const auto* key = event.getIf<sf::Event::KeyPressed>()) {
-        if (key->code == sf::Keyboard::Key::Escape)
-            quit = true;
+        if (key->code == sf::Keyboard::Key::Escape) {
+            // 联机中 Esc=离场(尽力 BYE+清理+回标题); 单人=退出
+            if (mode_ != Mode::Solo) netLeave();
+            else quit = true;
+        }
         // Scratch 里“停止全部”后项目就停在那; 这里加一个 R 重开的便利功能
         if (key->code == sf::Keyboard::Key::R &&
             (phase == Phase::Stopped || phase == Phase::GameOverMusic)) {
             if (gameOverMusic) gameOverMusic->stop();
             phase = Phase::Title;
+        }
+        // 标题画面联机入口(Task 5): H=开主机局, J=扫描加入。
+        // 单人玩法不使用 H/J 键, 与任何单人按键不冲突
+        if (mode_ == Mode::Solo && phase == Phase::Title) {
+            if (key->code == sf::Keyboard::Key::H) netStartHost();
+            else if (key->code == sf::Keyboard::Key::J) netStartScan();
+        }
+        // 联机客户端扫描页(Task 6 Step 2.5, spec §4): J=重新扫描;
+        // 扫描窗结束且发现多个主机时数字键 1-9 选定加入(单人不用数字键,
+        // J 在联机客户端态也无其它绑定; 已连接/连接中不响应)
+        if (mode_ == Mode::NetClient && net_ && !view_.has && !joiningStarted_) {
+            if (key->code == sf::Keyboard::Key::J) {
+                netScanDone_ = false;
+                net_->startScan(machineName());
+            } else if (netScanDone_ && net_->foundHosts().size() > 1) {
+                // SFML3 的 Key::Num1..Num9 为顶排数字键且连续
+                const int k = static_cast<int>(key->code) -
+                              static_cast<int>(sf::Keyboard::Key::Num1);
+                const int n = static_cast<int>(net_->foundHosts().size());
+                if (k >= 0 && k <= 8 && k < n) {
+                    netStartJoin(net_->foundHosts()[static_cast<std::size_t>(k)].addr);
+                    joiningStarted_ = true;
+                    netJoinWait_ = 0.f;
+                }
+            }
         }
     }
 }
@@ -87,7 +122,9 @@ void Game::handleEvent(const sf::Event& event) {
 // ---------------- 每帧逻辑(1/30s) ----------------
 
 void Game::update(float dt) {
-    pollVoice(dt);
+    pollVoice(dt); // 语音是本地输入源, 单/联机两模式都要轮询(必须在联机早退之前)
+    if (mode_ == Mode::NetHost) { netUpdateHost(dt); netBlinkTimer_ += dt; return; }
+    if (mode_ == Mode::NetClient) { netUpdateClient(dt); netBlinkTimer_ += dt; return; }
     switch (phase) {
     case Phase::Title:
         // “等待 按下鼠标” -> “播放 开始游戏 音乐直到播放完毕”
@@ -154,34 +191,11 @@ void Game::spawnEnemy() {
 void Game::updatePlayer(float dt) {
     // 炮塔脚本: 永远重复(移到车身位置, 面向鼠标)。
     // 被击中/游戏结束后炮塔仅隐藏, 其跟随脚本仍在运行, 导弹仍沿其朝向发射。
-    // 鼠标坐标经当前视图映射回 960x720 逻辑系(窗口缩放后依然准确)。
-    // 移植版附加(非原版): ←/→ 方向键逆/顺时针旋转炮塔, 接管期间暂停
-    // 鼠标跟随; 鼠标位置一变立即恢复原版的“面向鼠标”
-    if (phase != Phase::Title && phase != Phase::TitleMusic && phase != Phase::Stopped) {
-        const bool left = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left);
-        const bool right = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right);
-        const sf::Vector2i mouseNow = sf::Mouse::getPosition(window);
-        if (left || right) turretManual = true;
-        if (mouseNow != lastMousePos) {
-            turretManual = false;
-            voiceTurretRemain = 0.f; // 鼠标接管时取消未完成的语音旋转
-        }
-        lastMousePos = mouseNow;
-        if (std::abs(voiceTurretRemain) > 0.01f) {
-            // 语音口令: 按角度差旋转到目标(期间与方向键一样暂停鼠标跟随)
-            turretManual = true;
-            const float step = std::min(VoiceTurretSpeed * dt, std::abs(voiceTurretRemain));
-            const float s = voiceTurretRemain > 0.f ? step : -step;
-            player.turretDir += s;
-            voiceTurretRemain -= s;
-        } else if (left || right) {
-            player.turretDir += (right ? TurretTurnSpeed : -TurretTurnSpeed) * dt;
-        } else if (!turretManual) {
-            player.turretDir = stage::pointDirection(
-                player.pos,
-                stage::toStage(window.mapPixelToCoords(mouseNow)));
-        }
-    }
+    // 函数体抽为 updateTurretLocal(联机复用, 锚点参数化; 单人传 player.pos,
+    // 逐语句等价的纯重构)。守卫留在本调用点不进函数——联机会话期间
+    // Game::phase 恒为 Title, 守卫进了函数体联机炮塔就永远不更新
+    if (phase != Phase::Title && phase != Phase::TitleMusic && phase != Phase::Stopped)
+        updateTurretLocal(dt, player.pos);
 
     // 车身移动循环不监听“被击中/游戏结束”: 玩家被击中后(含整个结算音乐期间)
     // 隐形车身仍可用 WASD 驾驶, 爆炸动画与导弹发射点也随之移动
@@ -244,6 +258,272 @@ void Game::updatePlayer(float dt) {
         if (a.sndFirePlayer) playSound(*a.sndFirePlayer);
         fireCooldown = FireCooldown;
         voiceFireWait = 0.f;
+    }
+}
+
+// 从 updatePlayer 抽出的炮塔跟随段(单人路径的纯重构, 守卫在调用点)。
+// 鼠标坐标经当前视图映射回 960x720 逻辑系(窗口缩放后依然准确)。
+// 移植版附加(非原版): ←/→ 方向键逆/顺时针旋转炮塔, 接管期间暂停
+// 鼠标跟随; 鼠标位置一变立即恢复原版的“面向鼠标”
+void Game::updateTurretLocal(float dt, sf::Vector2f anchorPos) {
+    const bool left = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left);
+    const bool right = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right);
+    const sf::Vector2i mouseNow = sf::Mouse::getPosition(window);
+    if (left || right) turretManual = true;
+    if (mouseNow != lastMousePos) {
+        turretManual = false;
+        voiceTurretRemain = 0.f; // 鼠标接管时取消未完成的语音旋转
+    }
+    lastMousePos = mouseNow;
+    if (std::abs(voiceTurretRemain) > 0.01f) {
+        // 语音口令: 按角度差旋转到目标(期间与方向键一样暂停鼠标跟随)
+        turretManual = true;
+        const float step = std::min(VoiceTurretSpeed * dt, std::abs(voiceTurretRemain));
+        const float s = voiceTurretRemain > 0.f ? step : -step;
+        player.turretDir += s;
+        voiceTurretRemain -= s;
+    } else if (left || right) {
+        player.turretDir += (right ? TurretTurnSpeed : -TurretTurnSpeed) * dt;
+    } else if (!turretManual) {
+        player.turretDir = stage::pointDirection(
+            anchorPos, stage::toStage(window.mapPixelToCoords(mouseNow)));
+    }
+}
+
+// ---------------- 联机(Task 5; 单人路径不动, 全部以 mode_ != Solo 为闸) ----------------
+// 除照抄任务简报外, 本节含五处联机专属的防御性修正(均不触碰单人路径,
+// 详见 task-5-report.md 的偏差清单):
+//  A) netHandleEvents 内可能 netLeave()(掉线/版本不符), 其后 net_ 为空,
+//     两个 netUpdate* 在事件处理后统一判空早退(否则必空引用崩溃);
+//  B) 暂停帧不步进模拟, fired/hit/died 保留上帧值 -> 暂停时清位,
+//     否则暂停起始帧的事件会整段暂停期在本机与快照里反复重放;
+//  C) “新快照”以 tick 判定: NetSession::snap() 恒指向最新已接受帧(并非
+//     “本帧新到”), 不判 tick 会每帧重放事件音效, 且 noSnapSince 永不累计
+//     (Task 6 的“对端卡住”兜底标签随之失效);
+//  D) netLeave 补 joiningStarted_/netJoinWait_ 复位, netStartHost 补
+//     battle_ 复位(Esc 后同进程再开 H/J 不吃上一场残留状态);
+//  E) voiceFireWait 的递减原在单人 updatePlayer 里, 联机帧在 netUpdate*
+//     中递减, 否则语音“开炮”一次后在联机里永久连发。
+
+std::string Game::machineName() {
+    const char* cn = std::getenv("COMPUTERNAME");
+    return cn ? cn : "host";
+}
+
+void Game::netStartHost() {
+    auto n = std::make_unique<NetSession>();
+    if (!n->startHost(machineName())) {
+        std::cout << "[net] 52021 被占用(已有机局?), 回标题\n";
+        return; // 端口占用提示(渲染文字在 Task 6)
+    }
+    net_ = std::move(n); mode_ = Mode::NetHost; phase = Phase::Title; // 复用 Title 渲染底
+    battle_ = BattleState{}; // (D) 上一场残局(Over)会挡住倒计时首帧注入
+    netWasOver_ = false; // (D/终审#1) netWasOver_ 兼作主机侧 Over 进入沿检测, 开局前清
+}
+
+void Game::netStartScan() {
+    net_ = std::make_unique<NetSession>();
+    net_->startScan(machineName());
+    mode_ = Mode::NetClient;
+    netScanDone_ = false; // 新扫描窗开始(Step 2.5 的列表/自动连以前提为闸)
+}
+
+void Game::netStartJoin(sf::IpAddress host) {
+    net_->startJoin(host, machineName());
+}
+
+void Game::requestDirectJoin(const std::string& hostIp) {
+    // main.cpp --join 直连(Task 7 接命令行): 跳过扫描直接进 Joining 等首个 SNAP。
+    // SFML 3 无 string 构造(sf::IpAddress(hostIp) 是 SFML 2 写法), 静态
+    // resolve 返回 optional; 非法 IP 串则不进联机(保持 Solo)
+    if (const auto ip = sf::IpAddress::resolve(hostIp)) {
+        net_ = std::make_unique<NetSession>();
+        mode_ = Mode::NetClient;
+        net_->startJoin(*ip, machineName());
+        joiningStarted_ = true;
+        netJoinWait_ = 0.f;
+    } else {
+        std::cout << "[net] 无效的主机地址: " << hostIp << '\n';
+    }
+}
+
+void Game::netLeave() {
+    if (net_) net_->close(true); // 尽力 BYE; UDP 丢包则对端 5s 无包超时兜底
+    net_.reset(); mode_ = Mode::Solo; phase = Phase::Title;
+    netLocalReady_ = false; netWasOver_ = false; view_ = NetView{};
+    joiningStarted_ = false; netJoinWait_ = 0.f; // (D) Esc 后再 J 不吃 5s 旧等待
+    netScanDone_ = false;
+}
+
+InputState Game::buildLocalInput() {
+    // 键盘与语音口令在这里归一化(联机里语音与键盘同向不叠加——单人玩具行为不复现)
+    InputState in;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) in.moveBits |= 0x01;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) in.moveBits |= 0x02;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) in.moveBits |= 0x04;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) in.moveBits |= 0x08;
+    if (voiceMoveDir == 0.f) in.moveBits |= 0x01;         // 语音移动口令映射
+    else if (voiceMoveDir == 180.f) in.moveBits |= 0x02;
+    else if (voiceMoveDir == -90.f) in.moveBits |= 0x04;
+    else if (voiceMoveDir == 90.f) in.moveBits |= 0x08;
+    in.aim = player.turretDir;   // 本地炮塔语义(鼠标/←→/语音)已在单人代码算好
+    in.fire = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) ||
+              sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space) ||
+              voiceFireWait > 0.f;
+    return in;
+}
+
+void Game::netHandleEvents() {
+    for (const NetEvent& ev : net_->takeEvents()) {
+        if (!net_) break; // (A) 同批后续事件属于已离场会话(Busy 分支要用 net_)
+        if (ev.kind == NetEvent::Kind::Disconnected) {
+            std::cout << "[net] 对方已离开, 回标题\n";
+            netLeave();
+        } else if (ev.kind == NetEvent::Kind::Busy) {
+            // spec §4: busy 退回扫描页(不是回标题)。Busy/VersionMismatch 以
+            // 5Hz 重复到达, 本分支让会话离开 Joining 态, 天然只处理首个
+            std::cout << "[net] 对局进行中, 重新扫描\n";
+            joiningStarted_ = false; netJoinWait_ = 0.f;
+            view_ = NetView{};
+            netScanDone_ = false;
+            net_->startScan(machineName());
+        } else if (ev.kind == NetEvent::Kind::ScanDone) {
+            // 2s 扫描窗结束(Step 2.5): 此后才做 0/1/多 决策——不等窗结束
+            // 就连第一个, 局域网里有第二台主机时用户根本看不到选择列表
+            netScanDone_ = true;
+        } else if (ev.kind == NetEvent::Kind::VersionMismatch) {
+            std::cout << "[net] 版本不一致, 请两台机器使用同一份构建\n";
+            netLeave();
+        }
+    }
+}
+
+void Game::netUpdateHost(float dt) {
+    net_->poll(dt);
+    netHandleEvents();
+    if (!net_) return; // (A) 事件里可能已 netLeave()
+    if (!net_->clientJoined()) return;
+    if (battle_.phase == BattlePhase::Countdown && battle_.countdown >= 2.99f) {
+        // 首帧注入 BattleDefs(速度/围栏=单人常量; 命中盒=Assets 原始值+乘数,
+        // boxHitTest 内部乘 size —— 千万别预乘, 否则盒放大 3.3 倍)
+        netDefs_.playerSpeed = PlayerSpeed;
+        netDefs_.missileSpeed = MissileSpeed;
+        netDefs_.fireCooldown = FireCooldown;
+        netDefs_.minX = PlayerMinX; netDefs_.maxX = PlayerMaxX;
+        netDefs_.minY = PlayerMinY; netDefs_.maxY = PlayerMaxY;
+        netDefs_.tankHalfExtents = a.playerBody.halfExtents;
+        netDefs_.tankCenterOffset = a.playerBody.centerOffset;
+        netDefs_.tankSize = 0.30f;
+        netDefs_.missileHalfExtents = a.missile.halfExtents;
+        netDefs_.missileCenterOffset = a.missile.centerOffset;
+        netDefs_.missileSize = 0.50f;
+        resetBattle(battle_, netDefs_);
+    }
+    // 本机炮塔沿用单人跟随/手转/语音逻辑 -> 作为 aim 上报; 锚点=主机坦克位置
+    // (守卫已在单人调用点外, 这里无条件调); 主机自己的移动不走单人路径,
+    // 全部经 Battle(单一真相源)
+    updateTurretLocal(dt, battle_.tanks[0].pos);
+    if (voiceFireWait > 0.f) voiceFireWait -= dt; // (E) 递减原在单人 updatePlayer
+    InputState in[2] = {buildLocalInput(), net_->remoteInput()};
+    // 暂停判定仅战斗阶段适用(spec §6.3); 倒计时/结算期客户端不发 INP 不算停滞
+    const bool paused = battle_.phase == BattlePhase::Battle &&
+                        net_->remoteInputStale();
+    if (!paused) {
+        stepBattle(battle_, netDefs_, in, dt);
+    } else {
+        // (B) 暂停帧不步进: 清事件位, 否则暂停起始帧的 fired/hit/died 会
+        // 在整段暂停期反复出声并随每个新快照重放给客户端
+        for (int i = 0; i < 2; ++i)
+            battle_.fired[i] = battle_.hit[i] = battle_.died[i] = false;
+    }
+    for (int i = 0; i < 2; ++i) {          // 本机音效(事件)
+        if (battle_.fired[i] && a.sndFirePlayer) playSound(*a.sndFirePlayer);
+        if (battle_.hit[i] && a.sndExplosion) playSound(*a.sndExplosion);
+    }
+    net_->sendSnap(makeSnap(battle_, paused));
+    // (终审#1) 进结算沿清对端 ready: 对局期客户端不发 JOIN(ready 位只随
+    // JOIN 上报), peerReady_ 会冻结在上一局双 R 重开时的 true —— 不清则
+    // 第二局起主机砸 R 有 ~RTT+0.2s 单边重开窗口(违 spec §4 双方都按 R)。
+    // netWasOver_ 兼作主机侧的 Over 进入沿检测(与客户端路径共用一变量,
+    // Host/Client 两模式互斥不串扰; 开新会话处已复位)
+    if (battle_.phase == BattlePhase::Over) {
+        if (!netWasOver_) net_->resetPeerReady();
+        netWasOver_ = true;
+        // 双 R 重开: 本机 R 置 netLocalReady_, 远端看 remoteReady()
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R)) netLocalReady_ = true;
+        if (netLocalReady_ && net_->remoteReady()) {
+            netLocalReady_ = false;
+            net_->resetPeerReady();         // 双保险: 重开后下一次 Over 重新要求双方 R
+            resetBattle(battle_, netDefs_); // tick 在 NetSession, 永不重置(C1)
+        }
+    } else {
+        netWasOver_ = false; // 离开 Over(倒计时/战斗)即复位, 供下一次进入沿检测
+    }
+}
+
+void Game::netUpdateClient(float dt) {
+    net_->poll(dt);
+    netHandleEvents();
+    if (!net_) return; // (A) 事件里可能已 netLeave()
+    // 扫描期(Task 6 Step 2.5): 2s 扫描窗结束(ScanDone)后决策——恰 1 个自动连;
+    // 0 个由 renderNet 提示重试; >1 个停在主机列表由数字键选择(renderNet 画,
+    // handleEvent 收)。Task 5 的"见一个连第一个"被此取代(多主机时误连第一个)
+    if (netScanDone_ && !view_.has && !joiningStarted_ &&
+        net_->foundHosts().size() == 1) {
+        netStartJoin(net_->foundHosts().front().addr);
+        joiningStarted_ = true;
+        netJoinWait_ = 0.f;
+    }
+    // 连接超时(spec §4/§7): JOIN 发出 5 秒无任何 SNAP(--join 写错 IP/对端
+    // 死亡) -> 退回扫描, 不停在无反馈画面
+    if (!view_.has && joiningStarted_) {
+        netJoinWait_ += dt;
+        if (netJoinWait_ > 5.f) {
+            netJoinWait_ = 0.f;
+            joiningStarted_ = false;
+            netScanDone_ = false;
+            net_->startScan(machineName());
+        }
+    }
+    // 本机炮塔跟随(锚点=客户端坦克快照位置); INP 倒计时起即 30Hz 发
+    // (结算期不发, 改由 NetSession 5Hz 发 JOIN 带 ready 位)
+    updateTurretLocal(dt, view_.has
+                                ? sf::Vector2f(view_.snap.tanks[1].x,
+                                               view_.snap.tanks[1].y)
+                                : sf::Vector2f(0.f, 120.f));
+    const bool inGame = view_.has &&
+        (view_.snap.phase == proto::Phase::Countdown ||
+         view_.snap.phase == proto::Phase::Battle ||
+         view_.snap.phase == proto::Phase::Paused);
+    if (inGame) {
+        if (voiceFireWait > 0.f) voiceFireWait -= dt; // (E) 递减原在单人 updatePlayer
+        net_->sendInput(buildLocalInput()); // 空闲也发全零, 暂停判定依赖
+    }
+    // (C) 新快照以 tick 判定(每个 tick 恰好处理一次); 无新快照才累计
+    // noSnapSince, Task 6 据此画“对端卡住”兜底标签
+    if (net_->snap() && (!view_.has || net_->snap()->tick != view_.snap.tick)) {
+        const proto::SnapMsg& sn = *net_->snap();
+        const bool nowCd = sn.phase == proto::Phase::Countdown;
+        if (nowCd && !view_.wasCountdown) view_.countdownLocal = 3.f; // 本地倒计时(N3)
+        view_.wasCountdown = nowCd;
+        view_.snap = sn; view_.has = true;
+        view_.noSnapSince = 0.f;
+        for (int i = 0; i < 2; ++i) {        // 事件音效(每 tick 一次)
+            if (sn.events.fire[i] && a.sndFirePlayer) playSound(*a.sndFirePlayer);
+            if (sn.events.hit[i] && a.sndExplosion) playSound(*a.sndExplosion);
+        }
+        // Over->新局跳变: 清本机 ready(I-C, 否则第二局主机单边 R 即重开)
+        if (sn.phase != proto::Phase::Over && netWasOver_) netLocalReady_ = false;
+        netWasOver_ = sn.phase == proto::Phase::Over;
+    } else {
+        view_.noSnapSince += dt; // >1s 且对端 KEEP 仍活 -> 兜底暂停标签(N7/M-4,
+                                 //  真掉线 1-5s 间隙不误显, 见 Task 6 渲染条件)
+    }
+    if (view_.has && view_.snap.phase == proto::Phase::Countdown)
+        view_.countdownLocal -= dt;
+    if (view_.has && view_.snap.phase == proto::Phase::Over) {
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::R)) netLocalReady_ = true;
+        net_->setReady(netLocalReady_);      // 随 JOIN 5Hz 上报, 主机收双方 R 重开
     }
 }
 
@@ -424,11 +704,24 @@ void Game::updateProjectiles(float dt) {
 
 void Game::render(sf::RenderWindow& target) const {
     target.clear();
+    // 联机画面整体改走 renderNet(自绘背景; 插在通用背景绘制之前, 否则画两次)。
+    // 不放进下面的 if/else——联机会话期间 Game::phase 恒为 Title(复用标题渲染
+    // 底的既有约定), 走单人分支会错画标题画面
+    if (mode_ != Mode::Solo) { renderNet(target); return; }
     target.draw(sf::Sprite(a.background));
 
     if (phase == Phase::Title || phase == Phase::TitleMusic) {
         // 开始画面(点击后音乐播完才进入游戏)
         target.draw(sf::Sprite(a.screenStart));
+        // 联机入口提示(Task 6; README 已知差异: 标题画面新增一行文字)
+        if (a.font) {
+            sf::Text hint = makeText(utf8("H 创建联机对战    J 加入对战"),
+                                     20, sf::Color(0x44, 0x3c, 0x1b));
+            sf::FloatRect hb = hint.getLocalBounds();
+            hint.setOrigin({hb.size.x / 2.f, hb.size.y / 2.f});
+            hint.setPosition(stage::toWindow({0.f, -140.f}));
+            target.draw(hint);
+        }
     } else {
         // 子弹(敌方炮弹)
         for (const Bullet& b : bullets)
@@ -481,5 +774,181 @@ void Game::render(sf::RenderWindow& target) const {
             scoreText.setPosition({8.f, 6.f});
             target.draw(scoreText);
         }
+    }
+}
+
+// ---------------- 联机渲染(Task 6; render() 以 mode_ != Solo 早退进来) ----------------
+
+// 居中文字小工具: 舞台坐标定位, 原点=文字中心(同单人帮助文字的画法)
+void Game::drawCenteredText(sf::RenderWindow& target, const sf::String& str,
+                            unsigned size, sf::Color color,
+                            sf::Vector2f stagePos) const {
+    sf::Text t = makeText(str, size, color);
+    sf::FloatRect b = t.getLocalBounds();
+    t.setOrigin({b.size.x / 2.f, b.size.y / 2.f});
+    t.setPosition(stage::toWindow(stagePos));
+    target.draw(t);
+}
+
+// 血条 HUD(Step 3): 左上角原"分数"监视器位置附近, 两行 玩家1(房主)/玩家2
+// + 各 3 格 12x12 方块(满=深色/空=浅色); 不引入分数字样。
+// 血量: 主机读模拟 battle_.hp, 客户端读快照 view_.snap.hp
+void Game::drawNetHud(sf::RenderWindow& target) const {
+    const bool host = mode_ == Mode::NetHost;
+    const int hp[2] = {host ? battle_.hp[0]
+                            : static_cast<int>(view_.snap.hp[0]),
+                       host ? battle_.hp[1]
+                            : static_cast<int>(view_.snap.hp[1])};
+    for (int i = 0; i < 2; ++i) {
+        if (a.font) {
+            sf::Text label = makeText(utf8(i == 0 ? "玩家1(房主)" : "玩家2"),
+                                      18, sf::Color(0x22, 0x22, 0x22));
+            label.setPosition({10.f, 8.f + 22.f * static_cast<float>(i)});
+            target.draw(label);
+        }
+        for (int j = 0; j < 3; ++j) {
+            sf::RectangleShape cell({12.f, 12.f});
+            cell.setPosition({190.f + 15.f * static_cast<float>(j),
+                              10.f + 22.f * static_cast<float>(i)});
+            cell.setFillColor(j < hp[i] ? sf::Color(0x44, 0x3c, 0x1b)
+                                        : sf::Color(0xd0, 0xc8, 0xa8));
+            target.draw(cell);
+        }
+    }
+}
+
+// 联机画面: 主机画 battle_, 客户端画 view_.snap; 己方炮塔本地覆盖(跟手)。
+// clear() 已由 render() 调用点完成, 这里只补背景; 下方 if/else 与单人无关
+void Game::renderNet(sf::RenderWindow& target) const {
+    target.draw(sf::Sprite(a.background));
+    const bool host = mode_ == Mode::NetHost;
+    const sf::Color ink(0x44, 0x3c, 0x1b); // 同单人帮助文字的墨色
+    const bool inBattle = host ? battle_.phase != BattlePhase::Countdown
+                               : view_.has && view_.snap.phase != proto::Phase::Countdown;
+    if (!inBattle) { // 大厅/等待页(房间名等待 / 扫描提示 / 倒计时大字)
+        if (a.font) {
+            int digit = 0; // >0: 倒计时大字
+            if (host) {
+                // spec §4: 等待页显示房间名(=COMPUTERNAME); 连上后显示"已连接"
+                drawCenteredText(target, utf8("房间：" + machineName()),
+                                 24, ink, {0.f, 100.f});
+                if (net_ && net_->clientJoined()) {
+                    // spec §4: "已连接：<客户端名>"(随 JOIN 上报的 COMPUTERNAME)
+                    drawCenteredText(target,
+                                     utf8("已连接：" + net_->peerName()),
+                                     24, ink, {0.f, 60.f});
+                    digit = std::max(1, static_cast<int>(std::ceil(battle_.countdown)));
+                } else {
+                    drawCenteredText(target, utf8("等待对手加入..."),
+                                     24, ink, {0.f, 60.f});
+                }
+            } else if (view_.has) { // 已收到首个快照: 倒计时(客户端本地计时)
+                drawCenteredText(target, utf8("已连接"), 24, ink, {0.f, 60.f});
+                digit = std::max(1, static_cast<int>(std::ceil(view_.countdownLocal)));
+            } else if (joiningStarted_) { // JOIN 已发, 等首个 SNAP
+                drawCenteredText(target, utf8("连接中..."), 24, ink, {0.f, 60.f});
+            } else if (net_) { // 扫描页: 扫描中 / 主机列表(Step 2.5) / 未发现
+                const std::vector<FoundHost>& hosts = net_->foundHosts();
+                if (netScanDone_ && hosts.size() > 1) {
+                    const int n = std::min(static_cast<int>(hosts.size()), 9);
+                    drawCenteredText(target, utf8("按 1-9 加入"), 22, ink, {0.f, 110.f});
+                    for (int k = 0; k < n; ++k)
+                        drawCenteredText(
+                            target,
+                            utf8(std::to_string(k + 1) + ". " + hosts[static_cast<std::size_t>(k)].name),
+                            22, ink, {0.f, 70.f - 28.f * static_cast<float>(k)});
+                } else if (netScanDone_) { // 0 个(恰 1 个已在 update 里自动连)
+                    drawCenteredText(target,
+                                     utf8("未发现对局，按 J 重试或用 --join IP"),
+                                     24, ink, {0.f, 60.f});
+                } else {
+                    drawCenteredText(target,
+                                     utf8("扫描中... 按 J 重试或用 --join IP"),
+                                     24, ink, {0.f, 60.f});
+                }
+            }
+            if (digit > 0) // 3-2-1 大字
+                drawCenteredText(target, utf8(std::to_string(digit)), 120, ink, {0.f, -20.f});
+        }
+    } else {
+        // 双坦克: 客户端坦克(索引1)整体蓝色 tint 区分
+        const auto tankOf = [&](int i) -> proto::TankSnap {
+            if (host) {
+                const BattleTank& t = battle_.tanks[i];
+                return {t.pos.x, t.pos.y, t.dir, t.turret,
+                        static_cast<std::uint8_t>(t.state),
+                        static_cast<std::uint8_t>(t.animFrame)};
+            }
+            return view_.snap.tanks[i];
+        };
+        for (int i = 0; i < 2; ++i) {
+            const proto::TankSnap t = tankOf(i);
+            const bool blink = t.state == 2 &&            // 无敌闪烁(0.1s 翻转)
+                (static_cast<int>(netBlinkTimer_ * 10.f) % 2 == 0);
+            if (t.state == 1) {                           // 爆炸帧(数组下标已由
+                target.draw(makeSprite(a.playerExplosion[t.animFrame], // 协议校验<=5)
+                                       0.60f, {t.x, t.y}, t.dir));
+            } else if (!blink) {
+                sf::Sprite body = makeSprite(a.playerBody, 0.30f, {t.x, t.y}, t.dir);
+                if (i == 1) body.setColor(sf::Color(150, 180, 255));
+                target.draw(body);
+            }
+        }
+        // 导弹(客户端导弹同 tint)
+        auto drawMissiles = [&](const std::vector<proto::MissileSnap>& ms) {
+            for (const proto::MissileSnap& m : ms) {
+                sf::Sprite sp = makeSprite(a.missile, 0.50f, {m.x, m.y}, m.dir);
+                if (m.owner == 1) sp.setColor(sf::Color(150, 180, 255));
+                target.draw(sp);
+            }
+        };
+        if (host) drawMissiles(makeSnap(battle_, false).missiles);
+        else drawMissiles(view_.snap.missiles);
+        // 炮塔最上层: 己方用本地 player.turretDir(跟手), 对方用快照值
+        for (int i = 0; i < 2; ++i) {
+            const proto::TankSnap t = tankOf(i);
+            const bool own = host ? i == 0 : i == 1;
+            const float dir = own ? player.turretDir : t.turret;
+            const bool exploding = t.state == 1;
+            if (!exploding) {
+                sf::Sprite tur = makeSprite(a.playerTurret, 0.30f, {t.x, t.y}, dir);
+                if (i == 1) tur.setColor(sf::Color(150, 180, 255));
+                target.draw(tur);
+            }
+        }
+        drawNetHud(target); // 血条
+        // 结算画面 + 胜者文字 + 双 R 提示
+        const bool over = host ? battle_.phase == BattlePhase::Over
+                               : view_.snap.phase == proto::Phase::Over;
+        if (over) {
+            target.draw(sf::Sprite(a.screenGameOver));
+            if (a.font) {
+                // 胜者: 主机读模拟值 battle_.winner; 客户端由快照 hp 推导
+                // (双方血均归零=平局, 与 Battle.cpp 的 winner 判定一致)
+                int winner = host ? battle_.winner : -1;
+                if (!host) {
+                    if (view_.snap.hp[0] == 0 && view_.snap.hp[1] == 0) winner = 2;
+                    else if (view_.snap.hp[0] == 0) winner = 1;
+                    else if (view_.snap.hp[1] == 0) winner = 0;
+                }
+                if (winner >= 0)
+                    drawCenteredText(
+                        target,
+                        utf8(winner == 2 ? "平局"
+                             : (winner == 0 ? "玩家 1 胜利" : "玩家 2 胜利")),
+                        40, ink, {0.f, 40.f});
+                drawCenteredText(target, utf8("按 R 重开(双方)"), 22, ink, {0.f, -40.f});
+            }
+        }
+        // 暂停标签: 主机=对端 INP 停滞>1s 且 KEEP 仍活(同暂停判定);
+        // 客户端=主机显式 phase==3, 或 phase==1 且快照停更>1s 而 KEEP 仍活
+        // (真掉线的 1-5s 间隙不误显"暂停中")
+        const bool peerPaused = net_ && (
+            host ? (battle_.phase == BattlePhase::Battle && net_->remoteInputStale())
+                 : (view_.snap.phase == proto::Phase::Paused ||
+                    (view_.snap.phase == proto::Phase::Battle &&
+                     view_.noSnapSince > 1.f && net_->peerRecent())));
+        if (peerPaused && a.font)
+            drawCenteredText(target, utf8("对方暂停中"), 26, ink, {0.f, 130.f});
     }
 }
