@@ -32,6 +32,14 @@ static void setupView(sf::RenderWindow& window) {
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // 源码字符串字面量是 UTF-8 字节, 中文 Windows 控制台默认按 GBK(936)解码,
+    // cout 的中文会显示成乱码(如"语音控制已就绪"→"璇煶鎺у埗宸插氨缁"); 把
+    // 控制台输出码页切到 UTF-8。stdout 重定向到文件/管道时本调用无效但无害,
+    // 字节流仍是 UTF-8(net_smoke.py 等工具按 UTF-8 读, 不受影响)
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
     // --join <ip> 可出现在任意位置(启动直连, 免扫描); 首个非 -- 开头的位置
     // 参数仍是 assets 路径, 兼容 tank-battle.exe <assets路径> 的既有用法
     std::string assetDir = "assets", joinIp;
