@@ -92,7 +92,7 @@ int main() {
                 } else if (my[i] > 200 || my[i] < -200 ||
                            mx[i] > 250 || mx[i] < -250) {  // 四个方向都可能出屏
                     mx.erase(mx.begin() + i);
-                    my.erase(mx.begin() + i);
+                    my.erase(my.begin() + i);
                     md.erase(md.begin() + i);
                 }
             }
