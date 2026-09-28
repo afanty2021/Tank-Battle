@@ -822,10 +822,9 @@ void Game::renderNet(sf::RenderWindow& target) const {
                 drawCenteredText(target, utf8("房间：" + machineName()),
                                  24, ink, {0.f, 100.f});
                 if (net_ && net_->clientJoined()) {
-                    // 对端显示名未从 NetSession 暴露(本任务不动 socket 层),
-                    // 以对端 IP 代示; ASCII 部分当前字体子集即可渲染
+                    // spec §4: "已连接：<客户端名>"(随 JOIN 上报的 COMPUTERNAME)
                     drawCenteredText(target,
-                                     utf8("已连接 " + net_->peerAddress().toString()),
+                                     utf8("已连接：" + net_->peerName()),
                                      24, ink, {0.f, 60.f});
                     digit = std::max(1, static_cast<int>(std::ceil(battle_.countdown)));
                 } else {

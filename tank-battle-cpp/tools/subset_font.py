@@ -18,7 +18,10 @@ SRC = "NotoSansSC-Regular.otf"
 OUT = "assets/fonts/NotoSansSC-Game.otf"
 # 教学版课例里 draw_text 会渲染的中文也要加进来(lessons/L06~L08)
 TEXT = ("上下左右为键鼠标左键发射炮弹！，。：、分数"
-       "按空格再来一局开始生命时间胜利用坦克大战教学版")
+       "按空格再来一局开始生命时间胜利用坦克大战教学版"
+       # 联机对战 UI: src/Game.cpp 全部联机 utf8("...") 字面量的中文并集
+       # (标题提示行/大厅/扫描/HUD/结算/暂停标签; ASCII 由下方 0x20-0x7F 覆盖)
+       "创建联机对加入玩家房主已连接等待手中未现重试或扫描平双方暂停")
 
 # sanity: source font must open and contain our chars
 src = TTFont(SRC)

@@ -32,7 +32,16 @@ static void setupView(sf::RenderWindow& window) {
 }
 
 int main(int argc, char* argv[]) {
-    const std::string assetDir = argc > 1 ? argv[1] : "assets";
+    // --join <ip> 可出现在任意位置(启动直连, 免扫描); 首个非 -- 开头的位置
+    // 参数仍是 assets 路径, 兼容 tank-battle.exe <assets路径> 的既有用法
+    std::string assetDir = "assets", joinIp;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--join" && i + 1 < argc)
+            joinIp = argv[++i];
+        else if (arg.rfind("--", 0) != 0 && assetDir == "assets")
+            assetDir = arg; // 未知 -- 开头参数不吞掉 assetDir
+    }
     const std::string title = "\xE5\x9D\xA6\xE5\x85\x8B\xE5\xA4\xA7\xE6\x88\x98"; // 坦克大战
 
     Assets assets;
@@ -52,6 +61,7 @@ int main(int argc, char* argv[]) {
         window.setIcon(icon.getSize(), icon.getPixelsPtr());
 
     Game game(assets, window);
+    if (!joinIp.empty()) game.requestDirectJoin(joinIp);
 
 // 语音控制助手(仅 Windows): 独立最小化控制台启动, 游戏退出(心跳失联 5 秒)
 // 后自动关闭; 未接管语音端口(通常是已开着另一个游戏实例)时不拉起。

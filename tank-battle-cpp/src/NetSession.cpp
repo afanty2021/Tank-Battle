@@ -289,6 +289,8 @@ std::vector<NetEvent> NetSession::takeEvents() {
 
 sf::IpAddress NetSession::peerAddress() const { return peerIp_; }
 
+const std::string& NetSession::peerName() const { return peerName_; }
+
 void NetSession::close(bool sendBye) {
     if (sendBye && connected_) { // 尽力而为: UDP 无重传, 丢了靠对端 5s 超时兜底
         const auto b = proto::encodeBye();

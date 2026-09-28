@@ -54,6 +54,7 @@ public:
 
     std::vector<NetEvent> takeEvents();
     sf::IpAddress peerAddress() const;
+    const std::string& peerName() const; // 对端显示名(主机侧=客户端 JOIN 上报名)
 
 private:
     enum class Role {
